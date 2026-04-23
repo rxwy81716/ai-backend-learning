@@ -12,12 +12,14 @@ public class RedissonConfig {
 
     /**
      * 初始化Redisson
+     *
      * @return
      */
     @Bean
     @ConditionalOnMissingBean(RedissonClient.class)
     public RedissonClient initRedisson() {
         Config config = new Config();
+        config.setPassword("spjiyou");
         config.useSingleServer().setAddress("redis://127.0.0.1:6379");
         return Redisson.create(config);
     }

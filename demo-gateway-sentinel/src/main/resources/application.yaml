@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: demo-gateway-sentinel
+  cloud:
+    gateway:
+      routes:
+        - id: order-service
+          uri: lb://order-service
+          predicates:
+            - Path=/user/**
+          filters:
+            - name: OrderLogFilter
+            - name: AuthTokenGlobalFilter
+server:
+  port: 12124
