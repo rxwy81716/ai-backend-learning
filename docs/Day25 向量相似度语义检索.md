@@ -129,15 +129,11 @@ TopK 不能太大：
 ```
 threshold = 相似度门槛，低于这个值的结果被过滤
 
-pgvector 余弦距离范围 [0, 2]：
-  距离 = 0    --> 完全相似
-  距离 = 0.5  --> 较相似
-  距离 = 1    --> 完全不相关
-  距离 = 2    --> 完全相反
-
-配置 threshold = 0.7 意味着：
-  只召回余弦距离 < 0.7 的记录
-  距离 >= 0.7 的被舍去（"不太相关"）
+注意：SpringAI 的 similarityThreshold 是「相似度」不是「距离」！
+  相似度 = 1 - 余弦距离
+  threshold = 0.7 意味着：只召回相似度 >= 0.7 的记录（对应余弦距离 <= 0.3）
+  threshold = 0.0 意味着：不过滤（默认值，接受所有结果）
+  threshold = 1.0 意味着：最严格（只要完全匹配，几乎没结果）
 
 与 TopK 的区别：
   TopK：无论如何返回 K 条（不够就凑数）
@@ -146,7 +142,7 @@ pgvector 余弦距离范围 [0, 2]：
 组合使用，双重保险：
   SearchRequest.builder()
       .topK(5)                    // 最多返回5条
-      .similarityThreshold(0.7)    // 只返回距离<0.7的
+      .similarityThreshold(0.7)    // 只返回相似度>=0.7的
       .build()
   // 效果：最多5条，但只返回相关的（可能只有2条）
 ```
@@ -160,17 +156,15 @@ pgvector 余弦距离范围 [0, 2]：
 ### 1. 核心方法签名（背下来）
 
 ```java
-// 方法1：最简单用法（问什么就搜什么，TopK默认5）
+// 方法1：最简单用法（问什么就搜什么，内部用默认 SearchRequest）
 List<Document> similaritySearch(String query)
 
-// 方法2：指定 TopK（推荐生产用）
-List<Document> similaritySearch(String query, int topK)
+// 方法2：完整配置（所有参数可调，推荐生产用）
+List<Document> similaritySearch(SearchRequest request)
 
-// 方法3：完整配置（所有参数可调）
-List<Document> similaritySearch(SimilaritySearchRequest request)
-
-// 方法4：带过滤条件（按 metadata 过滤）
-List<Document> similaritySearch(SimilaritySearchRequest request, FilterExpression filter)
+// 注意：VectorStore 接口只有以上 2 个方法！
+// 没有 similaritySearch(String query, int topK) 这种重载
+// 需要指定 topK、threshold、filter 时，统一用 SearchRequest.builder() 构建
 ```
 
 
@@ -208,20 +202,22 @@ topK (int)
   --> 如果库中只有 2 条，返回 2 条（不会返回空）
 
 similarityThreshold (double)
-  --> 相似度阈值，范围 0 ~ 1（会自动转为对应距离算法）
-  --> 1.0 = 不过滤（返回所有）
-  --> 0.0 = 严格过滤（只返回完全匹配的，可能返回空）
-  --> 生产推荐：0.7 ~ 0.8
+  --> 最低相似度阈值，范围 0 ~ 1
+  --> 0.0 = 不过滤（返回所有结果，默认值，对应 SearchRequest.SIMILARITY_THRESHOLD_ACCEPT_ALL）
+  --> 1.0 = 最严格（只返回完全匹配的，几乎拿不到结果）
+  --> 数值越大越严格，越小越宽松
+  --> 生产推荐：0.7 ~ 0.8（只返回相似度 >= 0.7 的结果）
 
 filterExpression (FilterExpression)
   --> 按 metadata 字段过滤
   --> 底层会拼成 SQL WHERE 或 ES filter
-  --> 常用操作：
-      Eq("source", "java.pdf")           --> 等于
-      NotEq("source", "test.txt")        --> 不等于
-      In("source", List.of("a.txt","b.txt")) --> 在列表中
-      And(Eq(...), Eq(...))              --> 组合条件
-      Or(Eq(...), Eq(...))              --> 或条件
+  --> 常用操作（b = new FilterExpressionBuilder()）：
+      b.eq("source", "java.pdf")           --> 等于
+      b.ne("source", "test.txt")           --> 不等于
+      b.in("source", "a.txt", "b.txt")    --> 在列表中
+      b.and(b.eq(...), b.eq(...))          --> 组合条件
+      b.or(b.eq(...), b.eq(...))           --> 或条件
+      // b = new FilterExpressionBuilder()
 ```
 
 
@@ -238,12 +234,16 @@ public class Document {
 }
 
 // 使用示例
-List<Document> docs = vectorStore.similaritySearch("JVM调优", 5);
+SearchRequest request = SearchRequest.builder()
+    .query("JVM调优")
+    .topK(5)
+    .build();
+List<Document> docs = vectorStore.similaritySearch(request);
 
 for (Document doc : docs) {
-    String text = doc.getContent();                           // 原始文本
-    String source = doc.getMetadata().get("source");          // 来源
-    String chunkIndex = doc.getMetadata().get("chunk_index"); // 第几段
+    String text = doc.getContent();                                      // 原始文本
+    String source = (String) doc.getMetadata().get("source");            // 来源（注意强转）
+    String chunkIndex = (String) doc.getMetadata().get("chunk_index");   // 第几段（注意强转）
     System.out.println("来源：" + source + " 片段：" + chunkIndex);
     System.out.println("内容：" + text);
 }
@@ -297,12 +297,10 @@ ORDER BY embedding <=> '[0.12,...]' ASC
 LIMIT 5;
 ```
 
-
-
 ### 2. SpringAI VectorStore 检索代码（推荐）
 
 ```java
-package com.jianbo.springai.service;
+package com.jianbo.springai.service.search;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -437,12 +435,10 @@ public class VectorSearchService {
 }
 ```
 
-
-
 ### 3. PG 检索原理图（理解底层）
 
 ```
-vectorStore.similaritySearch("JVM怎么调优", 5) 背后发生了什么？
+vectorStore.similaritySearch(searchRequest) 背后发生了什么？
 
          ┌─────────────────────────────────────┐
          │  SearchRequest.builder()             │
@@ -483,8 +479,6 @@ vectorStore.similaritySearch("JVM怎么调优", 5) 背后发生了什么？
   VectorStore 全帮你做了！
 ```
 
-
-
 ### 4. 检索后验证 SQL
 
 ```sql
@@ -519,8 +513,6 @@ FROM vector_store
 WHERE metadata->>'total_chunks' = '1';  -- 只有1个片段的可能是噪音
 ```
 
-
-
 ------
 
 ## 五、Elasticsearch 语义检索（完整代码）
@@ -552,12 +544,10 @@ num_candidates 参数选择：
   - 候选太多（200）：速度慢，精度提升有限
 ```
 
-
-
 ### 2. SpringAI ElasticsearchVectorStore 方式（推荐代码）
 
 ```java
-package com.jianbo.springai.service;
+package com.jianbo.springai.service.search;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -676,23 +666,24 @@ public class EsVectorSearchService {
     }
 }
 ```
-
-
-
 ### 3. 手动 RestClient KNN 查询（自定义场景）
 
 ```java
-package com.jianbo.springai.service;
+package com.jianbo.springai.service.search;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jianbo.springai.service.save.EmbeddingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.elasticsearch.client.Request;
+import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestClient;
-import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -710,16 +701,17 @@ import java.util.Map;
 public class EsKnnSearchService {
 
     private final RestClient restClient;
-    private final EmbeddingModel embeddingModel;
+    private final EmbeddingService embeddingService;  
     private final ObjectMapper objectMapper;
     private static final String INDEX_NAME = "my_documents_es";
+    private static final int DEFAULT_NUM_CANDIDATES = 100;
 
     /**
      * 纯 KNN 向量检索
      */
     public List<Map<String, Object>> knnSearch(String query, int topK) throws IOException {
         // 1. 把问题转成向量
-        float[] queryVector = embeddingModel.embed(query);
+        float[] queryVector = embeddingService.embed(query);
 
         // 2. 构建 KNN 请求
         Request request = new Request("POST", "/" + INDEX_NAME + "/_search");
@@ -729,68 +721,89 @@ public class EsKnnSearchService {
                 "field": "embedding",
                 "query_vector": %s,
                 "k": %d,
-                "num_candidates": 50
+                "num_candidates": %d
               },
-              "_source": ["content", "source", "chunk_index"]
+              "_source": ["content", "source", "chunk_index", "doc_title"]
             }
-            """.formatted(vectorToJson(queryVector), topK);
+            """.formatted(vectorToJson(queryVector), topK, DEFAULT_NUM_CANDIDATES);
 
         request.setJsonEntity(knnBody);
-        var response = restClient.performRequest(request);
+        Response response = restClient.performRequest(request);
 
-        // 3. 解析结果（省略，实际用 objectMapper）
-        log.info("ES KNN 检索完成, topK: {}", topK);
-        return List.of();
+        // 3. 解析 ES 返回的 hits
+        List<Map<String, Object>> results = parseHits(response);
+        log.info("ES KNN 检索完成, 召回 {} 条", results.size());
+        return results;
     }
 
     /**
      * 混合检索：KNN 向量 + 全文关键词
      *
-     * 适用场景：
-     *   - 用户问题既想语义相关，又想包含某些关键词
-     *   - 例如："JVM 调优" --> 语义相似 + 包含"JVM"关键词
+     * 原理（ES 8.x）：
+     *   knn（顶层） → 语义相似度打分
+     *   query.match  → 关键词匹配打分
+     *   ES 自动合并两个分数
+     *
+     * 注意：ES 8.x 中 knn 必须放在顶层，不能放在 query.bool.should 里！
      */
     public List<Map<String, Object>> hybridSearch(String query, int topK) throws IOException {
-        float[] queryVector = embeddingModel.embed(query);
+        float[] queryVector = embeddingService.embed(query);
 
+        // ES 8.x 混合检索：knn 和 query 是平级的顶层参数
         Request request = new Request("POST", "/" + INDEX_NAME + "/_search");
         String hybridBody = """
             {
+              "knn": {
+                "field": "embedding",
+                "query_vector": %s,
+                "k": %d,
+                "num_candidates": %d
+              },
               "query": {
                 "bool": {
                   "must": [
-                    {
-                      "match": {
-                        "content": "%s"
-                      }
-                    }
-                  ],
-                  "should": [
-                    {
-                      "knn": {
-                        "field": "embedding",
-                        "query_vector": %s,
-                        "k": %d,
-                        "num_candidates": 50
-                      }
-                    }
+                    { "match": { "content": "%s" } }
                   ]
                 }
               },
-              "_source": ["content", "source", "chunk_index"]
+              "_source": ["content", "source", "chunk_index", "doc_title"],
+              "size": %d
             }
-            """.formatted(query, vectorToJson(queryVector), topK);
+            """.formatted(vectorToJson(queryVector), topK, DEFAULT_NUM_CANDIDATES,
+                escapeJson(query), topK);
 
         request.setJsonEntity(hybridBody);
-        restClient.performRequest(request);
+        Response response = restClient.performRequest(request);
 
-        log.info("ES 混合检索完成");
-        return List.of();
+        List<Map<String, Object>> results = parseHits(response);
+        log.info("ES 混合检索完成, 召回 {} 条", results.size());
+        return results;
     }
 
+    // ==================== 工具方法 ====================
+
     /**
-     * float[] 转 JSON 数组字符串
+     * 解析 ES 响应中的 hits
+     * ES 返回结构：{ "hits": { "hits": [ { "_score": 0.9, "_source": {...} } ] } }
      */
+    private List<Map<String, Object>> parseHits(Response response) throws IOException {
+        JsonNode root = objectMapper.readTree(response.getEntity().getContent());
+        JsonNode hits = root.path("hits").path("hits");
+
+        List<Map<String, Object>> results = new ArrayList<>();
+        for (JsonNode hit : hits) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("score", hit.path("_score").asDouble());
+            item.put("id", hit.path("_id").asText());
+            // 展开 _source 中的字段
+            JsonNode source = hit.path("_source");
+            source.fields().forEachRemaining(f -> item.put(f.getKey(), f.getValue().asText()));
+            results.add(item);
+        }
+        return results;
+    }
+
+    /** float[] 转 JSON 数组字符串 */
     private String vectorToJson(float[] vector) {
         StringBuilder sb = new StringBuilder("[");
         for (int i = 0; i < vector.length; i++) {
@@ -800,10 +813,16 @@ public class EsKnnSearchService {
         sb.append("]");
         return sb.toString();
     }
+
+    /** 转义 JSON 字符串中的特殊字符 */
+    private String escapeJson(String text) {
+        return text.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n");
+    }
 }
+
 ```
-
-
 
 ### 4. ES 检索后验证
 
@@ -823,17 +842,21 @@ curl -X POST http://localhost:9200/my_documents_es/_search -H "Content-Type: app
   "_source": ["content", "source"]
 }'
 
-# ===== 混合检索测试 =====
+# ===== 混合检索测试（ES 8.x：knn 和 query 是顶层平级参数）=====
 curl -X POST http://localhost:9200/my_documents_es/_search -H "Content-Type: application/json" -d '
 {
+  "knn": {
+    "field": "embedding",
+    "query_vector": [...],
+    "k": 3,
+    "num_candidates": 50
+  },
   "query": {
     "bool": {
-      "must": { "match": { "content": "JVM" } },
-      "should": [
-        { "knn": { "field": "embedding", "query_vector": [...], "k": 3, "num_candidates": 50 } }
-      ]
+      "must": { "match": { "content": "JVM" } }
     }
-  }
+  },
+  "size": 3
 }'
 ```
 
@@ -916,8 +939,12 @@ ES 配置：
   - 特点：速度慢，但精度高
 
 代码示例：
-  // 第一层：粗召回 50 条
-  List<Document> coarseResults = vectorStore.similaritySearch(query, 50);
+  // 第一层：粗召回 50 条（注意：VectorStore 没有 similaritySearch(query, topK) 重载）
+  SearchRequest coarseReq = SearchRequest.builder()
+      .query(query)
+      .topK(50)
+      .build();
+  List<Document> coarseResults = vectorStore.similaritySearch(coarseReq);
 
   // 第二层：精排，只取最相关的 5 条
   List<Document> fineResults = rerank(coarseResults, query, 5);
@@ -959,7 +986,10 @@ ES 配置：
 
 ## 七、PG vs ES 检索对比
 
-### 1. 检索语法对比
+> 功能对比、性能对比、选型决策已在 **Day24 第六节** 详细讲过，这里不再重复。
+> 本节只补充 **检索语法** 的差异。
+
+### 1. 底层检索语法对比
 
 ```
 PG（pgvector）：
@@ -968,9 +998,7 @@ PG（pgvector）：
         ORDER BY embedding <=> ?
         LIMIT 5;
 
-  SpringAI: vectorStore.similaritySearch(query, topK)
-
-ES：
+ES（8.x）：
   JSON:  {
            "knn": {
              "field": "embedding",
@@ -979,51 +1007,29 @@ ES：
              "num_candidates": 50
            }
          }
-
-  SpringAI: vectorStore.similaritySearch(query, topK)
-  （和 PG 完全一样，底层实现不同而已）
 ```
 
-
-
-### 2. 完整功能对比表
-
-| 特性           | PG + pgvector      | Elasticsearch                  |
-| :------------- | :----------------- | :----------------------------- |
-| 检索语法       | SQL `ORDER BY <=>` | JSON `knn { field, k }`        |
-| 相似度算法     | cosine / l2 / dot  | cosine / l2_norm / dot_product |
-| 混合检索       | 需手写 SQL 组合    | 原生支持 `knn + query`         |
-| 过滤条件       | SQL WHERE          | ES filter                      |
-| 分页           | OFFSET             | from / size                    |
-| 聚合           | GROUP BY           | aggregations                   |
-| 性能（百万级） | ~30ms              | ~10ms                          |
-| 性能（千万级） | ~200ms             | ~30ms                          |
-
-### 3. 选型决策（背结论）
+### 2. SpringAI 统一接口（重点）
 
 ```
-选 PG pgvector：
-  ✓ 已有 PostgreSQL，不想加新组件
-  ✓ 数据量 < 100万条
-  ✓ 需要和其他表联合查询（JOIN）
-  ✓ 团队熟悉 SQL
+无论底层是 PG 还是 ES，上层代码完全一样：
 
-选 Elasticsearch：
-  ✓ 数据量 > 100万条
-  ✓ 需要全文检索 + 向量检索混合
-  ✓ 需要水平扩展
-  ✓ 团队有 ES 运维经验
+  vectorStore.similaritySearch(SearchRequest)
 
-面试回答模板：
-  "中小规模用 PG pgvector，零额外运维，SQL 联合查询方便；
-   大规模或需要混合检索用 ES，天然分布式，检索性能好。
-   我们项目用的是 PG（/ES），原因是..."
+切换存储 = 换 Bean 配置，业务代码零改动
+--> 这就是面向接口编程的威力
 ```
+
+| 对比项       | PG                         | ES                          |
+| :----------- | :------------------------- | :-------------------------- |
+| 检索语法     | SQL `ORDER BY <=>`         | JSON `knn { field, k }`     |
+| 过滤条件     | SQL WHERE                  | ES filter                   |
+| 混合检索     | 需手写 SQL 组合            | 原生 `knn + query` 平级参数 |
+| SpringAI API | `vectorStore.similaritySearch(SearchRequest)` — 完全相同 |
 
 
 
 ------
-
 ## 八、完整 Controller + 测试代码
 
 ### 1. 检索测试 Controller
@@ -1031,8 +1037,8 @@ ES：
 ```java
 package com.jianbo.springai.controller;
 
-import com.jianbo.springai.service.VectorSearchService;
-import com.jianbo.springai.service.EsVectorSearchService;
+import com.jianbo.springai.service.search.VectorSearchService;
+import com.jianbo.springai.service.search.EsVectorSearchService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.ai.document.Document;
 import org.springframework.web.bind.annotation.*;
@@ -1062,27 +1068,15 @@ public class SearchController {
     // ==================== PG 检索接口 ====================
 
     /**
-     * 简单语义检索
+     * PG 语义检索（支持可选 topK）
      * GET /search/pg?query=JVM是什么
-     */
-    @GetMapping("/pg")
-    public Map<String, Object> pgSearch(@RequestParam String query) {
-        List<Document> results = vectorSearchService.search(query);
-
-        return Map.of(
-            "store", "pgvector",
-            "query", query,
-            "count", results.size(),
-            "results", formatResults(results)
-        );
-    }
-
-    /**
-     * 指定 TopK 检索
      * GET /search/pg?query=Java&topK=3
+     *
+     * 注意：两个路径都是 /pg，Spring MVC 不允许重复映射！
+     * 合并为一个方法，topK 用 defaultValue 处理
      */
     @GetMapping("/pg")
-    public Map<String, Object> pgSearchWithTopK(
+    public Map<String, Object> pgSearch(
             @RequestParam String query,
             @RequestParam(defaultValue = "5") int topK) {
         List<Document> results = vectorSearchService.search(query, topK);
@@ -1126,7 +1120,7 @@ public class SearchController {
             @RequestParam String query,
             @RequestParam String source,
             @RequestParam(defaultValue = "5") int topK) {
-        List<Document> results = vectorSearchService.searchWithSource(query, source, topK);
+        List<Document> results = vectorSearchService.search(query, source, topK);
 
         return Map.of(
             "store", "pgvector",
@@ -1184,7 +1178,7 @@ public class SearchController {
 ```java
 package com.jianbo.springai;
 
-import com.jianbo.springai.service.VectorSearchService;
+import com.jianbo.springai.service.search.VectorSearchService;
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -1263,7 +1257,7 @@ public class VectorSearchTest {
         System.out.println("========== 按来源过滤检索 ==========");
 
         // 只查 redis_guide.txt 来源的文档
-        List<Document> results = vectorSearchService.searchWithSource(
+        List<Document> results = vectorSearchService.search(
             "缓存", "redis_guide.txt", 3);
 
         System.out.println("问题：缓存，来源：redis_guide.txt");
@@ -1336,54 +1330,29 @@ pgvector 操作符：
 
 
 
-### 3. TopK 和 Threshold（背配置）
+### 3. 检索调优（背4条生产配置）
 
 ```
-TopK：召回数量，生产建议 3~5
-  K太小：漏召回
-  K太大：噪音多
-
-threshold：相似度阈值，生产建议 0.7~0.8
-  太高：漏召
-  太低：噪音多
-
-组合使用，双重保险
-```
-
-
-
-### 4. HNSW 查询原理（背参数）
-
-```
-HNSW 原理：多层图，上层粗定位下层精搜索
-
-关键参数（PG）：
-  m: 每个节点最大连接数（默认16）
-  ef_construction: 建索引搜索宽度（默认200）
-  ef_search: 查询搜索宽度（默认100）
-
-ES 参数：
-  num_candidates: 候选数量（类似 ef_search）
-
-ef_search 越大精度越高越慢，生产设 100
+1. TopK：生产设 3~5
+   K太小 → 漏召回；K太大 → 噪音多
+2. threshold：生产设 0.7~0.8
+   太高 → 漏召；太低 → 噪音
+3. HNSW ef_search：生产设 100
+   越大精度越高但越慢
+4. 两层召回：粗召回50 + 精排5
+   生产标配，精度最高
 ```
 
 
 
-### 5. VectorStore 检索 API（背方法签名）
+### 4. VectorStore 检索 API（背方法签名）
 
 ```
-简单检索：
+接口只有 2 个方法（没有 similaritySearch(query, topK) 重载！）：
   List<Document> similaritySearch(String query)
-  List<Document> similaritySearch(String query, int topK)
+  List<Document> similaritySearch(SearchRequest request)
 
-完整检索：
-  List<Document> similaritySearch(SimilaritySearchRequest request)
-
-带过滤：
-  List<Document> similaritySearch(SimilaritySearchRequest request, FilterExpression filter)
-
-SearchRequest 构建：
+需要指定 topK/threshold/filter 时，用 SearchRequest.builder()：
   SearchRequest.builder()
       .query(query)
       .topK(5)
@@ -1394,36 +1363,23 @@ SearchRequest 构建：
 
 
 
-### 6. PG vs ES 选型（背结论）
+### 5. PG vs ES 选型
 
 ```
-PG pgvector：百万级以下、SQL联合查询、零额外运维
-ES：百万级以上、混合检索、水平扩展
-
-实际选型看场景和团队技术栈
+详见 Day24 第六节。一句话：
+  百万以下用 PG pgvector，百万以上或需要混合检索用 ES
 ```
 
 
 
-### 7. 检索调优方法（背4条）
-
-```
-1. TopK：生产设 3~5，根据场景调整
-2. threshold：生产设 0.7~0.8
-3. HNSW ef_search：生产设 100，精度/性能平衡
-4. 两层召回：粗召回50 + 精排5，精度最高
-```
-
-
-
-### 8. 检索流程（背完整链路）
+### 6. 检索流程（背完整链路）
 
 ```
 用户问题
     ↓
 EmbeddingModel 转成向量
     ↓
-VectorStore.similaritySearch(query, topK)
+VectorStore.similaritySearch(SearchRequest)
     ↓
 SQL: SELECT ... ORDER BY embedding <=> ? LIMIT topK
     ↓
