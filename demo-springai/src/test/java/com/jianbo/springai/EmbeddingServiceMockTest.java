@@ -1,6 +1,6 @@
 package com.jianbo.springai;
 
-import com.jianbo.springai.service.EmbeddingService;
+import com.jianbo.springai.service.save.EmbeddingService;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;

@@ -1,4 +1,4 @@
-package com.jianbo.springai.service;
+package com.jianbo.springai.service.chat;
 
 import lombok.AllArgsConstructor;
 import org.springframework.ai.chat.client.ChatClient;

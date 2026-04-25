@@ -1,7 +1,7 @@
 package com.jianbo.springai.controller;
 
 import com.jianbo.springai.entity.ChatSessionDTO;
-import com.jianbo.springai.service.ChatSessionService;
+import com.jianbo.springai.service.chat.ChatSessionService;
 import lombok.AllArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 

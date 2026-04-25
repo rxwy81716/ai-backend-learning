@@ -1,6 +1,6 @@
 package com.jianbo.springai.controller;
 
-import com.jianbo.springai.service.MiniMaxAiService;
+import com.jianbo.springai.service.chat.MiniMaxAiService;
 import lombok.AllArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.GetMapping;

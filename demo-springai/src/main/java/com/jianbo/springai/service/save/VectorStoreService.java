@@ -1,4 +1,4 @@
-package com.jianbo.springai.service;
+package com.jianbo.springai.service.save;
 
 import com.jianbo.springai.utils.TextSplitterUtil;
 import lombok.RequiredArgsConstructor;

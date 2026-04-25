@@ -102,6 +102,25 @@
             <version>4.0.1</version>
             <scope>compile</scope>
         </dependency>
+        <!-- Elasticsearch 向量数据库 Starter（SpringAI 自动配置 ElasticsearchVectorStore） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-elasticsearch-store-spring-boot-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>co.elastic.clients</groupId>
+            <artifactId>elasticsearch-java</artifactId>
+            <version>8.13.3</version>
+        </dependency>
+<!--        &lt;!&ndash; Source: https://mvnrepository.com/artifact/org.elasticsearch.client/elasticsearch-rest-client &ndash;&gt;-->
+<!--        <dependency>-->
+<!--            <groupId>org.elasticsearch.client</groupId>-->
+<!--            <artifactId>elasticsearch-rest-client</artifactId>-->
+<!--            <version>9.3.3</version>-->
+<!--            <scope>compile</scope>-->
+<!--        </dependency>-->
+        <!-- ES 低级 REST 客户端（不写 version，由 Spring Boot BOM 管理） -->
+
     </dependencies>
     <dependencyManagement>
         <dependencies>

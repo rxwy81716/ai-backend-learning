@@ -1,7 +1,7 @@
 package com.jianbo.springai.controller;
 
-import com.jianbo.springai.service.EmbeddingService;
-import com.jianbo.springai.service.VectorStoreService;
+import com.jianbo.springai.service.save.EmbeddingService;
+import com.jianbo.springai.service.save.VectorStoreService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 

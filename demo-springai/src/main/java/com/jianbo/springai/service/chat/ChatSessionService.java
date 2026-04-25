@@ -1,4 +1,4 @@
-package com.jianbo.springai.service;
+package com.jianbo.springai.service.chat;
 
 import com.jianbo.springai.entity.ChatMsg;
 import com.jianbo.springai.entity.ChatSessionDTO;

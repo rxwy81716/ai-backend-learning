@@ -1,3 +1,5 @@
+server:
+  port: 12115
 spring:
   application:
     name: demo-springai
@@ -27,6 +29,10 @@ spring:
           # 检索配置
         similarity-threshold: 0.7     # 默认相似度阈值
         top-k: 5
+      elasticsearch:
+        index-name: vector_store_index         # ES 地址
+        dimensions: 1536
+        similarity: cosine
   servlet:
     encoding:
       charset: utf-8
@@ -48,8 +54,8 @@ spring:
     url: jdbc:postgresql://localhost:5432/vector_db
     username: myuser
     password: 525826
-server:
-  port: 12115
+  elasticsearch:
+    uris: http://localhost:9200
 # 日志配置（调试用）
 logging:
   level:
