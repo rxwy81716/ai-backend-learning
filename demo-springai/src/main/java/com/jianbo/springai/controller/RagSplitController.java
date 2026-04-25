@@ -1,6 +1,5 @@
 package com.jianbo.springai.controller;
 
-import com.jianbo.springai.utils.SentenceSplitter;
 import com.jianbo.springai.utils.TextSplitterUtil;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -45,7 +44,7 @@ plaintext；原始长文档；
 下一步：Embedding 转向量
 存入 PostgreSQL + pgvector
 """;
-    return SentenceSplitter.splitText(content);
+    return TextSplitterUtil.splitText(content);
   }
 
 

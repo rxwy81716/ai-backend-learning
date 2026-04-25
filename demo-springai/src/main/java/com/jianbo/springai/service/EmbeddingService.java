@@ -26,78 +26,105 @@ public class EmbeddingService {
    *     <p>使用示例 float[] embedding = embeddingService.embed("输入文本");
    */
   public float[] embed(String text) {
-    log.debug("开始向量化,文本长度:{}字符", text.length());
+    log.debug("开始向量化, 文本长度: {}字符", text.length());
     long startTime = System.currentTimeMillis();
-    // 构建请求
+
+    // 1. 构建 EmbeddingRequest 请求对象
+    //    参数1: List<String> 文本列表（单条也要包成List）
+    //    参数2: EmbeddingOptions 选项（null = 用yaml默认配置）
     EmbeddingRequest request = new EmbeddingRequest(List.of(text), null);
-    // 调用模型
+
+    // 2. 调用 Embedding 模型 API
+    //    底层会发HTTP请求到 MiniMax 服务器
+    //    服务器返回：文本对应的向量数组
     EmbeddingResponse response = embeddingModel.call(request);
 
-    // 获取向量(List<float[]>)，这里只取第一个
+    // 3. 从响应中提取向量
+    //    response.getResult() --> 第一个结果（因为只传了一条文本）
+    //    .getOutput()         --> 获取向量 float[]
     float[] vectorArray = response.getResult().getOutput();
+
     long cost = System.currentTimeMillis() - startTime;
-    log.info("向量化完成，耗时: {}ms, 向量维度: {}", cost, vectorArray.length);
+    log.info("向量化完成, 耗时: {}ms, 向量维度: {}", cost, vectorArray.length);
+
     return vectorArray;
   }
 
+  // ==================== 批量文本向量化 ====================
+
   /**
-   * 批量文本向量化（效率更高）
+   * 批量文本向量化（效率更高，生产必用）
    *
-   * @param texts 文本列表
-   * @return 向量列表
+   * @param texts 文本列表（如：Day22切好的N个片段）
+   * @return List<float[]> 向量列表（每个文本对应一个float[]）
+   *     <p>为什么要批量？ - 单条调用：每条文本发一次HTTP请求（慢！） - 批量调用：N条文本打包成一次HTTP请求（快N倍！）
+   *     <p>注意事项： - 大部分Embedding API 单次批量上限约 96~256 条 - 如果超过上限，需要分批处理（见下方 embedBatchSafe）
+   *     <p>调用示例： List<String> chunks = TextSplitterUtil.splitText(longDocument); List<float[]>
+   *     vectors = embeddingService.embedBatch(chunks); // chunks.size() == vectors.size()（一一对应）
    */
   public List<float[]> embedBatch(List<String> texts) {
-    log.debug("开始向量化,文本长度:{}字符", texts.size());
-
+    log.debug("开始批量向量化, 文本数量: {}", texts.size());
     long startTime = System.currentTimeMillis();
 
-    //批量请求
+    // 1. 构建批量请求（传入整个文本列表）
     EmbeddingRequest request = new EmbeddingRequest(texts, null);
+
+    // 2. 一次性调用（一个HTTP请求，返回所有向量）
     EmbeddingResponse response = embeddingModel.call(request);
+
+    // 3. 提取所有向量结果
+    //    response.getResults() --> List<Embedding>（多个结果）
+    //    每个 Embedding 对象的 .getOutput() --> float[]
     List<Embedding> results = response.getResults();
-    List<float[]> vectorArray = results.stream().map(Embedding::getOutput).toList();
+    List<float[]> vectorArray =
+        results.stream()
+            .map(Embedding::getOutput) // 提取每个结果的 float[]
+            .toList();
+
     long cost = System.currentTimeMillis() - startTime;
-    log.info("向量化完成，耗时: {}ms, 向量数量: {}", cost, vectorArray.size());
+    log.info("批量向量化完成, 耗时: {}ms, 向量数量: {}", cost, vectorArray.size());
+
     return vectorArray;
   }
 
+  // ==================== 大批量安全向量化（防限流） ====================
+
   /**
-   * 大批量分批向量化（防API限流）
+   * 大批量分批向量化（防API限流，生产必备）
    *
-   * @param texts 所有文本（如：1000条）
-   * @param batchSize 每批数量（如：50条）
-   * @return List<float[]> 所有向量
-   *
-   * 示例：
-   *   texts = 1000条
-   *   batchSize = 50
-   *   → 分20批处理，避免单次请求过大
+   * @param texts 所有文本片段（可能有上千条）
+   * @param batchSize 每批数量（推荐50~100）
+   * @return 所有向量（顺序和输入文本一一对应）
+   *     <p>原理： texts = 1000条，batchSize = 50 --> 分成 20 批，每批 50 条 --> 第1批 [0,49] --> 向量化 --> 结果加入总列表
+   *     --> 第2批 [50,99] --> 向量化 --> 结果加入总列表 --> ... --> 第20批 [950,999] --> 全部完成
    */
   public List<float[]> embedBatchWithChunking(List<String> texts, int batchSize) {
-    List<float[]> allVectors = new ArrayList<>();
+    java.util.List<float[]> allVectors = new java.util.ArrayList<>();
 
-    // 1. 分批处理
     for (int i = 0; i < texts.size(); i += batchSize) {
-      // 2. 截取当前批次
+      // 截取当前批次
       int end = Math.min(i + batchSize, texts.size());
       List<String> batch = texts.subList(i, end);
 
-      // 3. 向量化当前批次
+      // 向量化当前批次
       List<float[]> batchVectors = embedBatch(batch);
       allVectors.addAll(batchVectors);
 
-      System.out.println("已处理: " + end + "/" + texts.size());
+      log.info("批量向量化进度: {}/{}", end, texts.size());
     }
 
     return allVectors;
   }
 
+  // ==================== 余弦相似度计算 ====================
+
   /**
    * 计算两个文本的余弦相似度
    *
-   * @param text1 文本1
-   * @param text2 文本2
+   * @param text1 文本1（如："Java编程"）
+   * @param text2 文本2（如："Python编程"）
    * @return 相似度 [0,1]，越大越相似
+   *     <p>使用场景： - 测试两段文本是否语义相近 - 验证Embedding模型效果
    */
   public float cosineSimilarity(String text1, String text2) {
     float[] embedding1 = embed(text1);
@@ -107,24 +134,29 @@ public class EmbeddingService {
   }
 
   /**
-   * 余弦相似度计算
-   * 公式：cos(θ) = (A·B) / (|A|×|B|)
+   * 余弦相似度计算（纯数学）
+   *
+   * <p>公式：cos(theta) = (A·B) / (|A| x |B|)
+   *
+   * <p>A·B = 点积 = sum(a[i] * b[i]) |A| = 向量长度 = sqrt(sum(a[i]^2))
    */
   private double cosineSimilarity(float[] v1, float[] v2) {
+    // 防御：维度必须一致
     if (v1.length != v2.length) {
-      throw new IllegalArgumentException("向量维度不一致");
+      throw new IllegalArgumentException("向量维度不一致! v1=" + v1.length + ", v2=" + v2.length);
     }
 
-    double dotProduct = 0.0;
-    double norm1 = 0.0;
-    double norm2 = 0.0;
+    double dotProduct = 0.0; // 点积（分子）
+    double norm1 = 0.0; // v1的长度平方
+    double norm2 = 0.0; // v2的长度平方
 
     for (int i = 0; i < v1.length; i++) {
-      dotProduct += v1[i] * v2[i];
-      norm1 += Math.pow(v1[i], 2);
+      dotProduct += v1[i] * v2[i]; // 对应位相乘后累加
+      norm1 += Math.pow(v1[i], 2); // 每个分量的平方累加
       norm2 += Math.pow(v2[i], 2);
     }
 
+    // 防止除以零
     if (norm1 == 0 || norm2 == 0) {
       return 0.0;
     }

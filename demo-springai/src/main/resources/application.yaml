@@ -11,14 +11,7 @@ spring:
           max-tokens: 2048
       embedding:
         options:
-          model: MiniMax-M2.7
-    deepseek:
-      api-key: ${DEEPSEEK_API_KEY:sk-56e2020c1c9b41c6ad75016667f65877}
-      chat:
-        options:
-          model: DeepSeek-V4-Flash
-          temperature: 0.3
-          max-tokens: 2048
+          model: embo-01
     vectorstore:
       pgvector:
         index-type: hnsw              # 索引类型：HNSW（推荐）或 IVFFlat
@@ -62,3 +55,7 @@ logging:
   level:
     org.springframework.ai: DEBUG
     org.springframework.jdbc: DEBUG
+
+app:
+ minimax:
+   embedding-api-key: ${MINIMAX_EMBEDDING_KEY:sk-api-8dCzOLFyV8PwFtf7t8IeyPLLElOFF507H1rGOG6Fl41mMa4c1TtCsqa_SZDR4aLL30pPmGUYAfwP9Oo9cAwPOgmRfxHs7uL37UWPb4vRRFKHzY-_mOVD5eA}
