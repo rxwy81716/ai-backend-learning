@@ -53,6 +53,7 @@ ai-backend-learning/
 ├── demo-mq/                # MQ生产消费、消息可靠性、幂等消费Demo
 ├── demo-gateway-sentinel/  # 微服务网关、接口限流熔断Demo
 │
+├── demo-springai-front    # node 前端    
 ├── ai-rag-project/        # 项目1 核心🔥 AI知识库RAG文档问答
 ├── ai-sql-project/        # 项目2 AI自然语言转SQL助手
 │
