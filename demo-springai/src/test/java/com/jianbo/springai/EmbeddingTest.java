@@ -85,16 +85,21 @@ public class EmbeddingTest {
      */
     @Test
     void testImportDocument() {
+//        String content = """
+//            Java是一门面向对象的编程语言，由Sun公司于1995年发布。
+//            Java具有跨平台、安全性高、面向对象、多线程等特性。
+//            Java广泛应用于企业级应用、Android开发、大数据等领域。
+//            JVM是Java虚拟机，是Java跨平台的核心实现。
+//            Spring是Java最流行的企业级开发框架，简化了Java开发。
+//            MyBatis是Java生态中的持久层框架，用于数据库操作。
+//            Redis是一款高性能的内存数据库，常用于缓存和分布式锁。
+//            PostgreSQL是强大的关系型数据库，配合pgvector可做向量检索。
+//            """;
         String content = """
-            Java是一门面向对象的编程语言，由Sun公司于1995年发布。
-            Java具有跨平台、安全性高、面向对象、多线程等特性。
-            Java广泛应用于企业级应用、Android开发、大数据等领域。
-            JVM是Java虚拟机，是Java跨平台的核心实现。
-            Spring是Java最流行的企业级开发框架，简化了Java开发。
-            MyBatis是Java生态中的持久层框架，用于数据库操作。
-            Redis是一款高性能的内存数据库，常用于缓存和分布式锁。
-            PostgreSQL是强大的关系型数据库，配合pgvector可做向量检索。
-            """;
+2023年9月20日,以“虚实相生,产业赋能”为主题的WMC2023第二届世界元宇宙大会在上海安亭隆重举行。
+大会由中国仿真学会、中国指挥与控制学会和北京理工大学共同主办,上海市嘉定区安亭镇人民政府和中国仿真学会元宇宙专业委员会共同承办。
+工业和信息化部科技司副司长任爱光、中国仿真学会副理事长纪志成、北京理工大学计算机学院党委书记丁刚毅、上海市嘉定区委副书记、区长高香出席开幕式并致辞。
+""";
 
         int count = vectorStoreService.importDocument(content, "java_knowledge.txt");
 
