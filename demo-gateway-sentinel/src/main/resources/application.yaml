@@ -11,5 +11,9 @@ spring:
           filters:
             - name: OrderLogFilter
             - name: AuthTokenGlobalFilter
+    sentinel:
+      transport:
+        dashboard: 127.0.0.1:8080 #sentinel dashboard地址
+      eager: true #立即加载 不懒加载
 server:
   port: 12124

@@ -40,6 +40,34 @@ ai-backend-learning/
 ├── .gitignore             # Git文件忽略配置
 └── README.md              # 仓库总说明&60天学习路线
 
+```
+java-concurrent
+Day01-线程基础.md
+Day02-线程池.md
+Day03-线程池底层原理.md
+Day04-Java锁机制.md
+Day05-经典并发坑.md
+
+middleware
+Day06-Redis基础.md
+Day07-Redis三大缓存故障.md
+Day08-分布式锁.md
+Day09-MQ消息队列基础.md
+Day10-MQ可靠性问题.md
+Day11-Gateway网关.md
+Day12-Sentinel限流熔断.md
+
+jvm
+Day13-JVM内存模型.md
+Day14-JVM垃圾回收.md
+
+spring-ai-rag
+Day15-Day30 SpringAI+RAG全套笔记
+
+project-optimize
+Day31-Day45 线上优化+面试深度全套
+```
+
 
 
 
