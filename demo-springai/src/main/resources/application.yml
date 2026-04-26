@@ -1,6 +1,9 @@
 server:
   port: 12115
+#选择local
 spring:
+  profiles:
+    active: local
   application:
     name: demo-springai
   ai:
@@ -38,22 +41,6 @@ spring:
       charset: utf-8
       enabled: true
       force: true
-  data:
-    redis:
-      host: localhost
-      port: 6379
-      password: spjiyou
-      timeout: 1000
-      lettuce:
-        pool:
-          max-active: 100
-          max-idle: 100
-          min-idle: 10
-  datasource:
-    driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/vector_db
-    username: myuser
-    password: 525826
   elasticsearch:
     uris: http://localhost:9200
 # 日志配置（调试用）
@@ -61,7 +48,6 @@ logging:
   level:
     org.springframework.ai: DEBUG
     org.springframework.jdbc: DEBUG
-
 app:
  minimax:
    embedding-api-key: ${MINIMAX_EMBEDDING_KEY:sk-api-8dCzOLFyV8PwFtf7t8IeyPLLElOFF507H1rGOG6Fl41mMa4c1TtCsqa_SZDR4aLL30pPmGUYAfwP9Oo9cAwPOgmRfxHs7uL37UWPb4vRRFKHzY-_mOVD5eA}
