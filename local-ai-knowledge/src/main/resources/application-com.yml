@@ -1,14 +1,15 @@
 spring:
-  minimax:
-    api-key: ${MINIMAX_API_KEY:sk-cp-vBXrVb07yCb61nNn73fmjHvvNI_VIEyH-_WVwSmSNdFDX_EkZjfvt15XJwqVndDWJEZzxqCuy6PjzgNWdd3_4EPvGuSE_cD1yXki9zzHsoGybOUqYM8d5Jg}
-    chat:
-      options:
-        model: MiniMax-M2.7
-        temperature: 0.3
-        max-tokens: 2048
-    embedding:
-      options:
-        model: embo-01
+  ai:
+    minimax:
+      api-key: ${MINIMAX_API_KEY:sk-cp-vBXrVb07yCb61nNn73fmjHvvNI_VIEyH-_WVwSmSNdFDX_EkZjfvt15XJwqVndDWJEZzxqCuy6PjzgNWdd3_4EPvGuSE_cD1yXki9zzHsoGybOUqYM8d5Jg}
+      chat:
+        options:
+          model: MiniMax-M2.7
+          temperature: 0.3
+          max-tokens: 2048
+      embedding:
+        options:
+          model: embo-01
 
   datasource:
     driver-class-name: org.postgresql.Driver

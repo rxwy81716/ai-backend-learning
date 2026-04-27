@@ -1,8 +1,8 @@
 server:
   port: 12116
+spring:
   profiles:
     active: com
-spring:
   application:
     name: local-ai-knowledge
   ai:
