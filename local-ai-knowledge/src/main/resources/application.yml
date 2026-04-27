@@ -1,0 +1,41 @@
+server:
+  port: 12116
+  profiles:
+    active: com
+spring:
+  application:
+    name: local-ai-knowledge
+  ai:
+    vectorstore:
+#      elasticsearch:
+#        index-name: knowledge_vector_store
+#        dimensions: 1024   # bge-m3的维度
+#        similarity: cosine
+      pgvector:
+        index-type: hnsw              # 索引类型：HNSW（推荐）或 IVFFlat
+        distance-type: COSINE_DISTANCE # 距离算法：余弦相似度
+        dimensions: 1536              # 向量维度（必须与模型一致）
+        initialize-schema: false      # M5版本需要手动初始化，改为false
+        schema-name: public
+        table-name: vector_store
+        # 向量索引配置
+        hnsw:
+          m: 16                        # 每个节点的最大连接数
+          ef-construction: 200        # 构建时的动态列表大小
+          # 检索配置
+        similarity-threshold: 0.7     # 默认相似度阈值
+        top-k: 5
+      elasticsearch:
+        index-name: knowledge_vector_store
+        dimensions: 1536
+        similarity: cosine
+    elasticsearch:
+      uris: http://localhost:9200  # ES 地址
+  servlet:
+    encoding:
+      charset: utf-8
+      enabled: true
+      force: true
+logging:
+  level:
+    org.springframework.ai: DEBUG

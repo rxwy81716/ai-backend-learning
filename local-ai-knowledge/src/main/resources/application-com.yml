@@ -1,0 +1,20 @@
+spring:
+  minimax:
+    api-key: ${MINIMAX_API_KEY:sk-cp-vBXrVb07yCb61nNn73fmjHvvNI_VIEyH-_WVwSmSNdFDX_EkZjfvt15XJwqVndDWJEZzxqCuy6PjzgNWdd3_4EPvGuSE_cD1yXki9zzHsoGybOUqYM8d5Jg}
+    chat:
+      options:
+        model: MiniMax-M2.7
+        temperature: 0.3
+        max-tokens: 2048
+    embedding:
+      options:
+        model: embo-01
+
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: jdbc:postgresql://localhost:5432/vector_db
+    username: myuser
+    password: 525826
+app:
+  minimax:
+    embedding-api-key: ${MINIMAX_EMBEDDING_KEY:sk-api-8dCzOLFyV8PwFtf7t8IeyPLLElOFF507H1rGOG6Fl41mMa4c1TtCsqa_SZDR4aLL30pPmGUYAfwP9Oo9cAwPOgmRfxHs7uL37UWPb4vRRFKHzY-_mOVD5eA}
