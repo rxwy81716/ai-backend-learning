@@ -89,6 +89,42 @@ public class EsVectorSearchService {
         return results;
     }
 
+    // ==================== 用户隔离检索 ====================
+
+    /**
+     * 用户隔离检索：只返回该用户的私有文档 + 公共文档（爬虫数据）
+     *
+     * 过滤逻辑：(doc_scope == PUBLIC) OR (doc_scope == PRIVATE AND user_id == userId)
+     */
+    public List<Document> searchWithOwnership(String query, String userId, int topK, double similarityThreshold) {
+        log.debug("用户隔离检索 | query={}, userId={}, topK={}", query, userId, topK);
+
+        var b = new FilterExpressionBuilder();
+
+        Filter.Expression filter;
+        if (userId != null && !userId.isBlank()) {
+            // 公共文档 OR 该用户的私有文档
+            filter = b.or(
+                    b.eq("doc_scope", "PUBLIC"),
+                    b.and(b.eq("doc_scope", "PRIVATE"), b.eq("user_id", userId))
+            ).build();
+        } else {
+            // 未登录：只看公共文档
+            filter = b.eq("doc_scope", "PUBLIC").build();
+        }
+
+        SearchRequest request = SearchRequest.builder()
+                .query(query)
+                .topK(topK)
+                .similarityThreshold(similarityThreshold)
+                .filterExpression(filter)
+                .build();
+
+        List<Document> results = vectorStore.similaritySearch(request);
+        log.debug("用户隔离检索完成 | userId={}, 召回 {} 条", userId, results.size());
+        return results;
+    }
+
     // ==================== 动态 Filter ====================
 
     private Filter.Expression buildFilter(List<String> sources, Integer minChunks) {

@@ -78,19 +78,42 @@ public class EsVectorStoreService {
     log.info("ES 已删除 {} 条", documentIds.size());
   }
 
+  /**
+   * 带用户归属的文档入库（用户上传为 PRIVATE，爬虫为 PUBLIC）
+   *
+   * @param rawText  原始文本
+   * @param source   文档来源名
+   * @param userId   用户ID（爬虫入库传 null）
+   * @param docScope 文档范围：PRIVATE / PUBLIC
+   */
+  public int importDocuments(String rawText, String source, String userId, String docScope) {
+    String clean = TextCleanUtil.clean(rawText);
+    List<String> splitText = TextSplitterUtil.splitText(clean);
+    log.debug("文本清洗切片完成:{}段,来源:{},scope:{}", splitText.size(), source, docScope);
+
+    List<Document> documents = getDocuments(source, splitText, userId, docScope);
+    vectorStore.add(documents);
+    log.debug("文档入库完成:{}段,来源:{},userId:{}", documents.size(), source, userId);
+    return documents.size();
+  }
+
   private static @NonNull List<Document> getDocuments(String source, List<String> splitText) {
+    return getDocuments(source, splitText, null, "PUBLIC");
+  }
+
+  private static @NonNull List<Document> getDocuments(String source, List<String> splitText,
+                                                       String userId, String docScope) {
     List<Document> documents = new ArrayList<>();
     for (int i = 0; i < splitText.size(); i++) {
-      Document document =
-          new Document(
-              splitText.get(i),
-              Map.of(
-                  "source",
-                  source,
-                  "chunk_index",
-                  String.valueOf(i),
-                  "total_chunks",
-                  String.valueOf(splitText.size())));
+      Map<String, Object> metadata = new HashMap<>();
+      metadata.put("source", source);
+      metadata.put("chunk_index", String.valueOf(i));
+      metadata.put("total_chunks", String.valueOf(splitText.size()));
+      metadata.put("doc_scope", docScope != null ? docScope : "PUBLIC");
+      if (userId != null) {
+        metadata.put("user_id", userId);
+      }
+      Document document = new Document(splitText.get(i), metadata);
       documents.add(document);
     }
     return documents;

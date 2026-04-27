@@ -32,10 +32,27 @@ spring:
     elasticsearch:
       uris: http://localhost:9200  # ES 地址
   servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
     encoding:
       charset: utf-8
       enabled: true
       force: true
+  data:
+    redis:
+      host: localhost
+      port: 6379
+app:
+  upload:
+    dir: ./uploads
+  web-search:
+    enabled: false                    # 启用网络搜索降级（需配置 api-key）
+    api-key: ${TAVILY_API_KEY:}      # Tavily API Key（环境变量或直接填）
+    max-results: 3
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
 logging:
   level:
     org.springframework.ai: DEBUG

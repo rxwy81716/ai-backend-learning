@@ -13,9 +13,9 @@ spring:
 
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:5432/vector_db
-    username: myuser
-    password: 525826
+    url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge
+    username: jianbo
+    password: 123456
 app:
   minimax:
     embedding-api-key: ${MINIMAX_EMBEDDING_KEY:sk-api-8dCzOLFyV8PwFtf7t8IeyPLLElOFF507H1rGOG6Fl41mMa4c1TtCsqa_SZDR4aLL30pPmGUYAfwP9Oo9cAwPOgmRfxHs7uL37UWPb4vRRFKHzY-_mOVD5eA}
