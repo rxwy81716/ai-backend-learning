@@ -2,6 +2,7 @@ package com.jianbo.localaiknowledge.controller;
 
 import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.service.DocumentParseService;
+import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,7 +48,12 @@ public class DocumentController {
 
     @PostMapping("/upload")
     public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file,
-                                     @RequestParam(value = "userId", required = false) String userId) {
+                                     @RequestParam(value = "userId", required = false) String userIdParam) {
+        // 优先从 JWT Token 获取 userId，未认证时降级为请求参数
+        String userId = SecurityUtil.getCurrentUserIdStr();
+        if (userId == null) {
+            userId = userIdParam;
+        }
         if (file.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "文件不能为空"));
         }

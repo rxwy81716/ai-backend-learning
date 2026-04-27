@@ -7,6 +7,7 @@ import com.jianbo.localaiknowledge.model.ChatMessage;
 import com.jianbo.localaiknowledge.model.SystemPrompt;
 import com.jianbo.localaiknowledge.service.RagAgentService;
 import com.jianbo.localaiknowledge.service.RagService;
+import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -70,7 +71,11 @@ public class RagController {
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = UUID.randomUUID().toString().replace("-", "");
         }
-        String userId = body.get("userId");
+        // 优先从 JWT Token 获取 userId，未认证时降级为请求体参数
+        String userId = SecurityUtil.getCurrentUserIdStr();
+        if (userId == null) {
+            userId = body.get("userId");
+        }
         String promptName = body.get("promptName");
 
         Map<String, Object> result = ragAgentService.chat(sessionId, question, userId, promptName);
@@ -90,7 +95,10 @@ public class RagController {
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = UUID.randomUUID().toString().replace("-", "");
         }
-        String userId = body.get("userId");
+        String userId = SecurityUtil.getCurrentUserIdStr();
+        if (userId == null) {
+            userId = body.get("userId");
+        }
         String promptName = body.get("promptName");
 
         return ragAgentService.chatStream(sessionId, question, userId, promptName);

@@ -50,6 +50,9 @@ app:
     enabled: false                    # 启用网络搜索降级（需配置 api-key）
     api-key: ${TAVILY_API_KEY:}      # Tavily API Key（环境变量或直接填）
     max-results: 3
+  jwt:
+    secret: ${JWT_SECRET:my-super-secret-key-for-jwt-which-is-at-least-256-bits-long!!}
+    expiration-hours: 24              # Token 有效期（小时）
 mybatis:
   configuration:
     map-underscore-to-camel-case: true

@@ -1,0 +1,58 @@
+package com.jianbo.localaiknowledge.mapper;
+
+import com.jianbo.localaiknowledge.model.SysRole;
+import com.jianbo.localaiknowledge.model.SysUser;
+import org.apache.ibatis.annotations.*;
+
+import java.util.List;
+
+/**
+ * 用户 Mapper
+ */
+@Mapper
+public interface SysUserMapper {
+
+    @Select("SELECT * FROM sys_user WHERE username = #{username}")
+    SysUser findByUsername(@Param("username") String username);
+
+    @Select("SELECT * FROM sys_user WHERE id = #{id}")
+    SysUser findById(@Param("id") Long id);
+
+    @Insert("INSERT INTO sys_user (username, password, nickname, email, phone) " +
+            "VALUES (#{username}, #{password}, #{nickname}, #{email}, #{phone})")
+    @Options(useGeneratedKeys = true, keyProperty = "id")
+    int insert(SysUser user);
+
+    @Update("UPDATE sys_user SET nickname=#{nickname}, email=#{email}, phone=#{phone}, " +
+            "avatar=#{avatar}, updated_at=CURRENT_TIMESTAMP WHERE id=#{id}")
+    int update(SysUser user);
+
+    @Update("UPDATE sys_user SET enabled=#{enabled}, updated_at=CURRENT_TIMESTAMP WHERE id=#{id}")
+    int updateEnabled(@Param("id") Long id, @Param("enabled") Boolean enabled);
+
+    @Update("UPDATE sys_user SET password=#{password}, updated_at=CURRENT_TIMESTAMP WHERE id=#{id}")
+    int updatePassword(@Param("id") Long id, @Param("password") String password);
+
+    /** 查询用户的所有角色 */
+    @Select("SELECT r.* FROM sys_role r " +
+            "INNER JOIN sys_user_role ur ON r.id = ur.role_id " +
+            "WHERE ur.user_id = #{userId}")
+    List<SysRole> findRolesByUserId(@Param("userId") Long userId);
+
+    /** 给用户分配角色 */
+    @Insert("INSERT INTO sys_user_role (user_id, role_id) VALUES (#{userId}, #{roleId}) " +
+            "ON CONFLICT (user_id, role_id) DO NOTHING")
+    int assignRole(@Param("userId") Long userId, @Param("roleId") Long roleId);
+
+    /** 根据角色编码查角色 */
+    @Select("SELECT * FROM sys_role WHERE code = #{code}")
+    SysRole findRoleByCode(@Param("code") String code);
+
+    /** 查询所有用户（管理员用） */
+    @Select("SELECT * FROM sys_user ORDER BY created_at DESC")
+    List<SysUser> findAll();
+
+    /** 检查用户名是否存在 */
+    @Select("SELECT COUNT(*) > 0 FROM sys_user WHERE username = #{username}")
+    boolean existsByUsername(@Param("username") String username);
+}
