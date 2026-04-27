@@ -20,7 +20,7 @@ public class VectorStoreConfig {
   @Value("${spring.ai.vectorstore.elasticsearch.index-name:knowledge_vector_store}")
   private String esIndexName;
 
-  @Value("${spring.ai.vectorstore.elasticsearch.dimensions:1024}")
+  @Value("${spring.ai.vectorstore.elasticsearch.dimensions:1536}")
   private Integer esDimensions;
 
   /**
