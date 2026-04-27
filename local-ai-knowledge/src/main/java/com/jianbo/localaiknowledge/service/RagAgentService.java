@@ -75,10 +75,15 @@ public class RagAgentService {
      * @param promptName SystemPrompt 名称（null = 默认）
      */
     public Map<String, Object> chat(String sessionId, String question, String userId, String promptName) {
+        long t0 = System.currentTimeMillis();
+
         // ===== Agent 1: 知识库检索 =====
         List<Document> docs = (userId != null && !userId.isBlank())
                 ? searchService.searchWithOwnership(question, userId, RAG_TOP_K, SIMILARITY_THRESHOLD)
                 : searchService.search(question, RAG_TOP_K, SIMILARITY_THRESHOLD);
+
+        long t1 = System.currentTimeMillis();
+        log.info("⏱ ES检索 {}ms | hitDocs={}", t1 - t0, docs.size());
 
         String source;
         String filledPrompt;
@@ -130,10 +135,13 @@ public class RagAgentService {
         chatContextUtil.trimByToken(messages);
 
         // 调用 LLM
+        long t2 = System.currentTimeMillis();
         String answer = chatClient.prompt()
                 .messages(messages)
                 .call()
                 .content();
+        long t3 = System.currentTimeMillis();
+        log.info("⏱ LLM生成 {}ms | source={}, answerLen={}", t3 - t2, source, answer.length());
 
         // 持久化
         if (sessionId != null) {
@@ -157,6 +165,10 @@ public class RagAgentService {
         if (!docs.isEmpty()) {
             result.put("references", buildReferences(docs));
         }
+
+        long total = System.currentTimeMillis() - t0;
+        log.info("⏱ 总耗时 {}ms | ES={}ms, LLM={}ms, source={}", total, t1 - t0, t3 - t2, source);
+        result.put("costMs", total);
         return result;
     }
 

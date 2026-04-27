@@ -6,6 +6,7 @@ import com.jianbo.localaiknowledge.utils.RedisUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.util.Collections;
@@ -38,18 +39,31 @@ public class ChatHistoryCacheService {
     private static final long TTL_MINUTES = 30;
 
     /**
-     * 保存一条消息（DB + Redis 双写）
+     * 保存一条消息（Redis 同步 + DB 异步）
+     *
+     * Redis 同步写入保证缓存一致性（后续读取立即可见）
+     * DB 异步写入避免阻塞请求线程（~5-20ms 省下来）
      */
     public void saveMessage(ChatMessage message) {
-        // 1. 写 DB（持久化）
-        conversationMapper.insert(message);
-
-        // 2. 追加到 Redis List
+        // 1. 同步写 Redis（保证下次读取能看到）
         String key = KEY_PREFIX + message.getSessionId();
         redisTemplate.opsForList().rightPush(key, message);
         redisTemplate.expire(key, TTL_MINUTES, TimeUnit.MINUTES);
 
-        log.debug("消息已双写 | session={}, role={}", message.getSessionId(), message.getRole());
+        // 2. 异步写 DB（不阻塞主线程）
+        persistToDb(message);
+
+        log.debug("消息已保存 | session={}, role={}", message.getSessionId(), message.getRole());
+    }
+
+    /** DB 异步持久化（失败只记日志，不影响主流程） */
+    @Async
+    public void persistToDb(ChatMessage message) {
+        try {
+            conversationMapper.insert(message);
+        } catch (Exception e) {
+            log.error("DB 持久化失败 | session={}, error={}", message.getSessionId(), e.getMessage());
+        }
     }
 
     /**

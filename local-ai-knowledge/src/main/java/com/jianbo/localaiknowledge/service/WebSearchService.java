@@ -37,6 +37,11 @@ public class WebSearchService {
 
     private static final String TAVILY_URL = "https://api.tavily.com/search";
 
+    /** 复用连接池，避免每次请求新建 WebClient */
+    private static final WebClient WEB_CLIENT = WebClient.builder()
+            .codecs(c -> c.defaultCodecs().maxInMemorySize(2 * 1024 * 1024))
+            .build();
+
     /**
      * 执行网络搜索
      *
@@ -53,7 +58,6 @@ public class WebSearchService {
             log.info("发起网络搜索 | query={}", query);
             long start = System.currentTimeMillis();
 
-            WebClient client = WebClient.create();
             Map<String, Object> requestBody = Map.of(
                     "api_key", apiKey,
                     "query", query,
@@ -63,7 +67,7 @@ public class WebSearchService {
             );
 
             @SuppressWarnings("unchecked")
-            Map<String, Object> response = client.post()
+            Map<String, Object> response = WEB_CLIENT.post()
                     .uri(TAVILY_URL)
                     .contentType(MediaType.APPLICATION_JSON)
                     .bodyValue(requestBody)
