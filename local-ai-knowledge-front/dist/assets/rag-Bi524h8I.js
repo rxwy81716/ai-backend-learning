@@ -1,0 +1,1 @@
+import{Y as s}from"./index-dcE0PFNe.js";function r(){return s.get("/api/rag/sessions")}function i(e){return s.get(`/api/rag/history/${e}`)}function n(e){return s.delete(`/api/rag/session/${e}`)}export{i as a,n as d,r as g};
