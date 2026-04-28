@@ -53,6 +53,9 @@ app:
   jwt:
     secret: ${JWT_SECRET:my-super-secret-key-for-jwt-which-is-at-least-256-bits-long!!}
     expiration-hours: 24              # Token 有效期（小时）
+  rate-limit:
+    anonymous-max: 20                 # 匿名用户每窗口最大请求数
+    window-minutes: 60                # 限流窗口（分钟）
 mybatis:
   configuration:
     map-underscore-to-camel-case: true

@@ -57,11 +57,12 @@
             <artifactId>spring-ai-minimax-spring-boot-starter</artifactId>
             <version>${spring-ai.version}</version>
         </dependency>
-        <!-- 添加 Ollama 依赖 -->
-<!--        <dependency>-->
-<!--            <groupId>org.springframework.ai</groupId>-->
-<!--            <artifactId>spring-ai-ollama-spring-boot-starter</artifactId>-->
-<!--        </dependency>-->
+        <!-- Ollama 本地大模型（家里部署时使用） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-ollama-spring-boot-starter</artifactId>
+            <version>${spring-ai.version}</version>
+        </dependency>
         <!--        lombok-->
         <dependency>
             <groupId>org.projectlombok</groupId>
@@ -136,12 +137,12 @@
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
         </dependency>
-        <!-- Spring Security -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
         <!-- JJWT（JWT 生成 + 解析） -->
+        <!--         Spring Security -->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>
             <artifactId>jjwt-api</artifactId>

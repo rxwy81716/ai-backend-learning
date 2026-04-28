@@ -1,4 +1,7 @@
 spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.ollama.OllamaAutoConfiguration
   ai:
     minimax:
       api-key: ${MINIMAX_API_KEY:sk-cp-vBXrVb07yCb61nNn73fmjHvvNI_VIEyH-_WVwSmSNdFDX_EkZjfvt15XJwqVndDWJEZzxqCuy6PjzgNWdd3_4EPvGuSE_cD1yXki9zzHsoGybOUqYM8d5Jg}
@@ -17,5 +20,7 @@ spring:
     username: jianbo
     password: 123456
 app:
+  llm:
+    provider: minimax
   minimax:
     embedding-api-key: ${MINIMAX_EMBEDDING_KEY:sk-api-8dCzOLFyV8PwFtf7t8IeyPLLElOFF507H1rGOG6Fl41mMa4c1TtCsqa_SZDR4aLL30pPmGUYAfwP9Oo9cAwPOgmRfxHs7uL37UWPb4vRRFKHzY-_mOVD5eA}

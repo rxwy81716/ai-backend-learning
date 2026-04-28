@@ -54,6 +54,10 @@ public class RagService {
     private static final double SIMILARITY_THRESHOLD = 0.3;
     /** 多轮对话最多加载最近 N 条历史 */
     private static final int MAX_HISTORY_MESSAGES = 20;
+    /** LLM 调用超时（秒） */
+    private static final int LLM_TIMEOUT_SECONDS = 30;
+    /** LLM 调用最大重试次数 */
+    private static final int LLM_MAX_RETRIES = 2;
 
     // ==================== 单轮问答（同步） ====================
 
@@ -84,13 +88,10 @@ public class RagService {
         String systemPromptContent = loadSystemPrompt(promptName);
         String filledPrompt = systemPromptContent.replace("{context}", context);
 
-        // 4. 调用 LLM
+        // 4. 调用 LLM（带超时 + 重试保护）
         log.info("RAG 问答 | question={}, hitDocs={}", question, docs.size());
-        String answer = chatClient.prompt()
-                .system(filledPrompt)
-                .user(question)
-                .call()
-                .content();
+        List<Message> messages = List.of(new SystemMessage(filledPrompt), new UserMessage(question));
+        String answer = callLlmWithProtection(messages);
 
         // 5. 构建引用信息
         List<Map<String, Object>> references = buildReferences(docs);
@@ -159,14 +160,11 @@ public class RagService {
         // 5. Token 裁剪（保留 System，从最早的历史对话开始删）
         chatContextUtil.trimByToken(messages);
 
-        // 6. 调用 LLM
+        // 6. 调用 LLM（带超时 + 重试保护）
         log.info("RAG 多轮 | session={}, question={}, historySize={}, hitDocs={}",
                 sessionId, question, history.size(), docs.size());
 
-        String answer = chatClient.prompt()
-                .messages(messages)
-                .call()
-                .content();
+        String answer = callLlmWithProtection(messages);
 
         // 7. 持久化当前轮对话（DB + Redis 双写）
         chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question));
@@ -257,6 +255,33 @@ public class RagService {
     }
 
     // ==================== 辅助方法 ====================
+
+    /**
+     * LLM 调用保护层：超时 + 重试 + 降级兜底
+     */
+    private String callLlmWithProtection(List<Message> messages) {
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
+            try {
+                java.util.concurrent.CompletableFuture<String> future =
+                        java.util.concurrent.CompletableFuture.supplyAsync(() ->
+                                chatClient.prompt()
+                                        .messages(messages)
+                                        .call()
+                                        .content());
+                return future.get(LLM_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                log.warn("LLM 调用超时 | attempt={}/{}, timeout={}s", attempt, LLM_MAX_RETRIES, LLM_TIMEOUT_SECONDS);
+                lastException = e;
+            } catch (Exception e) {
+                log.warn("LLM 调用异常 | attempt={}/{}, error={}", attempt, LLM_MAX_RETRIES, e.getMessage());
+                lastException = e;
+            }
+        }
+        log.error("LLM 调用全部失败 | retries={}, lastError={}", LLM_MAX_RETRIES,
+                lastException != null ? lastException.getMessage() : "unknown");
+        return "抱歉，AI 服务暂时不可用，请稍后重试。";
+    }
 
     /** 从检索文档构建上下文文本 */
     private String buildContext(List<Document> docs) {

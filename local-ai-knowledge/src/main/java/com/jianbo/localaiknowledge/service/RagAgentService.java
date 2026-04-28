@@ -57,6 +57,11 @@ public class RagAgentService {
     private static final double SIMILARITY_THRESHOLD = 0.3;
     private static final int MAX_HISTORY_MESSAGES = 20;
 
+    /** LLM 调用超时（秒） */
+    private static final int LLM_TIMEOUT_SECONDS = 30;
+    /** LLM 调用最大重试次数 */
+    private static final int LLM_MAX_RETRIES = 2;
+
     /** LLM 直答 Prompt（知识库未命中时使用，允许模型用自身知识回答） */
     private static final String LLM_DIRECT_PROMPT =
             "你是一个智能问答助手。用户的问题在知识库中未找到相关内容，" +
@@ -134,12 +139,9 @@ public class RagAgentService {
         messages.add(new UserMessage(question));
         chatContextUtil.trimByToken(messages);
 
-        // 调用 LLM
+        // 调用 LLM（带超时 + 重试 + 降级兜底）
         long t2 = System.currentTimeMillis();
-        String answer = chatClient.prompt()
-                .messages(messages)
-                .call()
-                .content();
+        String answer = callLlmWithProtection(messages);
         long t3 = System.currentTimeMillis();
         log.info("⏱ LLM生成 {}ms | source={}, answerLen={}", t3 - t2, source, answer.length());
 
@@ -231,6 +233,7 @@ public class RagAgentService {
                 .messages(messages)
                 .stream()
                 .content()
+                .timeout(java.time.Duration.ofSeconds(LLM_TIMEOUT_SECONDS))
                 .doOnNext(fullAnswer::append)
                 .doOnComplete(() -> {
                     if (sessionId != null) {
@@ -239,10 +242,46 @@ public class RagAgentService {
                                 ChatMessage.of(sessionId, "assistant", fullAnswer.toString(), meta));
                     }
                 })
-                .doOnError(e -> log.error("Agent 流式异常: {}", e.getMessage()));
+                .onErrorResume(e -> {
+                    log.error("Agent 流式异常: {}", e.getMessage());
+                    return Flux.just("抱歉，AI 服务暂时不可用，请稍后重试。");
+                });
     }
 
     // ==================== 辅助方法 ====================
+
+    /**
+     * LLM 调用保护层：超时 + 重试 + 降级兜底
+     *
+     * 策略：
+     *   1. 单次调用超时 30 秒（防止 LLM 卡死占满线程）
+     *   2. 失败自动重试 2 次（覆盖偶发网络抖动）
+     *   3. 全部失败返回友好提示（不让用户看到异常堆栈）
+     */
+    private String callLlmWithProtection(List<Message> messages) {
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
+            try {
+                java.util.concurrent.CompletableFuture<String> future =
+                        java.util.concurrent.CompletableFuture.supplyAsync(() ->
+                                chatClient.prompt()
+                                        .messages(messages)
+                                        .call()
+                                        .content());
+
+                return future.get(LLM_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                log.warn("LLM 调用超时 | attempt={}/{}, timeout={}s", attempt, LLM_MAX_RETRIES, LLM_TIMEOUT_SECONDS);
+                lastException = e;
+            } catch (Exception e) {
+                log.warn("LLM 调用异常 | attempt={}/{}, error={}", attempt, LLM_MAX_RETRIES, e.getMessage());
+                lastException = e;
+            }
+        }
+        log.error("LLM 调用全部失败 | retries={}, lastError={}", LLM_MAX_RETRIES,
+                lastException != null ? lastException.getMessage() : "unknown");
+        return "抱歉，AI 服务暂时不可用，请稍后重试。";
+    }
 
     private String buildDocContext(List<Document> docs) {
         StringBuilder sb = new StringBuilder();

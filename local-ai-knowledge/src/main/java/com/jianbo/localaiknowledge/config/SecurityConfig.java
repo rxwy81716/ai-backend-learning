@@ -33,6 +33,7 @@ import java.util.Map;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
     private final ObjectMapper objectMapper;
 
     @Bean
@@ -53,16 +54,17 @@ public class SecurityConfig {
                 .requestMatchers("/auth/me").authenticated()
                 // 注册登录公开
                 .requestMatchers("/auth/**").permitAll()
-                // 管理员接口
+                // 管理员接口：必须 ROLE_ADMIN
                 .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
-                // 其余接口需认证
-                .requestMatchers("/api/**").authenticated()
-                // 其他资源放行（如健康检查、静态文件等）
+                // 其余 /api/**：允许匿名访问，由 RateLimitFilter 限流未认证请求
+                .requestMatchers("/api/**").permitAll()
+                // 其他资源放行
                 .anyRequest().permitAll()
             )
 
-            // JWT 过滤器插在 UsernamePasswordAuthenticationFilter 之前
+            // 过滤器顺序：JWT 解析 → 限流判断 → Security 鉴权
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterAfter(rateLimitFilter, JwtAuthenticationFilter.class)
 
             // 自定义 401 / 403 响应（返回 JSON 而非默认 HTML）
             .exceptionHandling(ex -> ex

@@ -1,4 +1,7 @@
 spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.ai.autoconfigure.minimax.MiniMaxAutoConfiguration
   ai:
     ollama:
       base-url: http://localhost:11434
@@ -10,8 +13,14 @@ spring:
       embedding:
         options:
           model: bge-m3
+    vectorstore:
+      elasticsearch:
+        dimensions: 1024              # bge-m3 向量维度
   datasource:
     url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge
     username: jianbo
     password: 123456
     driver-class-name: org.postgresql.Driver
+app:
+  llm:
+    provider: ollama
