@@ -44,6 +44,10 @@ public interface SysUserMapper {
             "ON CONFLICT (user_id, role_id) DO NOTHING")
     int assignRole(@Param("userId") Long userId, @Param("roleId") Long roleId);
 
+    /** 清除用户所有角色 */
+    @Delete("DELETE FROM sys_user_role WHERE user_id = #{userId}")
+    int clearUserRoles(@Param("userId") Long userId);
+
     /** 根据角色编码查角色 */
     @Select("SELECT * FROM sys_role WHERE code = #{code}")
     SysRole findRoleByCode(@Param("code") String code);
@@ -52,7 +56,27 @@ public interface SysUserMapper {
     @Select("SELECT * FROM sys_user ORDER BY created_at DESC")
     List<SysUser> findAll();
 
+    /** 查询所有用户（带角色信息） */
+    @Select("SELECT * FROM sys_user ORDER BY created_at DESC")
+    @Results({
+        @Result(property = "roles", column = "id",
+            many = @Many(select = "findRolesByUserId"))
+    })
+    List<SysUser> findAllWithRoles();
+
+    /** 统计某角色的用户数量 */
+    @Select("SELECT COUNT(*) FROM sys_user_role WHERE role_id = #{roleId}")
+    int countByRoleId(@Param("roleId") Long roleId);
+
     /** 检查用户名是否存在 */
     @Select("SELECT COUNT(*) > 0 FROM sys_user WHERE username = #{username}")
     boolean existsByUsername(@Param("username") String username);
+
+    /** 统计用户总数 */
+    @Select("SELECT COUNT(*) FROM sys_user")
+    int count();
+
+    /** 根据ID删除用户 */
+    @Delete("DELETE FROM sys_user WHERE id = #{id}")
+    int deleteById(@Param("id") Long id);
 }

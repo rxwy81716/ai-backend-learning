@@ -42,4 +42,11 @@ public class ChatMessage {
         msg.setMetadata(metadata);
         return msg;
     }
+
+    //没有userId
+    public static ChatMessage of(String sessionId, String role, String content, String metadata, String userId) {
+        ChatMessage msg = of(sessionId, role, content, metadata);
+        msg.setUserId(userId);
+        return msg;
+    }
 }

@@ -147,10 +147,10 @@ public class RagAgentService {
 
         // 持久化
         if (sessionId != null) {
-            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question));
+            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, null, userId));
             String meta = toJson(Map.of("source", source, "hitCount",
                     docs.isEmpty() ? 0 : docs.size()));
-            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "assistant", answer, meta));
+            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "assistant", answer, meta, userId));
         }
 
         // 构建响应
@@ -223,7 +223,7 @@ public class RagAgentService {
         chatContextUtil.trimByToken(messages);
 
         if (sessionId != null) {
-            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question));
+            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, null, userId));
         }
 
         final String finalSource = source;
@@ -239,7 +239,7 @@ public class RagAgentService {
                     if (sessionId != null) {
                         String meta = toJson(Map.of("source", finalSource));
                         chatHistoryCache.saveMessage(
-                                ChatMessage.of(sessionId, "assistant", fullAnswer.toString(), meta));
+                                ChatMessage.of(sessionId, "assistant", fullAnswer.toString(), meta, userId));
                     }
                 })
                 .onErrorResume(e -> {

@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
-import type { RouteRecordNormalized } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useMenuStore } from '@/stores/menu'
 import NProgress from 'nprogress'
@@ -9,15 +8,14 @@ const Login = () => import('@/views/auth/Login.vue')
 const Register = () => import('@/views/auth/Register.vue')
 const Layout = () => import('@/layout/index.vue')
 
-// RAG相关页面
+// RAG 智能问答
 const RagChat = () => import('@/views/rag/RagChat.vue')
-const MultiChat = () => import('@/views/rag/MultiChat.vue')
-
-// 文档管理
-const DocumentManage = () => import('@/views/document/DocumentManage.vue')
 
 // 管理员页面
 const UserManage = () => import('@/views/admin/UserManage.vue')
+const RoleManage = () => import('@/views/admin/RoleManage.vue')
+const MenuManage = () => import('@/views/admin/MenuManage.vue')
+const AgentManage = () => import('@/views/admin/AgentManage.vue')
 
 // 错误页面
 const NotFound = () => import('@/views/error/404.vue')
@@ -65,18 +63,6 @@ const privateRoutes: RouteRecordRaw[] = [
         meta: { title: '智能问答', icon: 'ChatDotRound' }
       },
       {
-        path: 'rag/multi-chat',
-        name: 'MultiChat',
-        component: MultiChat,
-        meta: { title: '多轮对话', icon: 'ChatLineRound' }
-      },
-      {
-        path: 'document',
-        name: 'DocumentManage',
-        component: DocumentManage,
-        meta: { title: '文档管理', icon: 'Document', requiredRoles: ['ROLE_ADMIN'] }
-      },
-      {
         path: 'admin',
         name: 'Admin',
         redirect: '/admin/users',
@@ -87,6 +73,24 @@ const privateRoutes: RouteRecordRaw[] = [
             name: 'UserManage',
             component: UserManage,
             meta: { title: '用户管理', requiredRoles: ['ROLE_ADMIN'] }
+          },
+          {
+            path: 'roles',
+            name: 'RoleManage',
+            component: RoleManage,
+            meta: { title: '角色管理', requiredRoles: ['ROLE_ADMIN'] }
+          },
+          {
+            path: 'menus',
+            name: 'MenuManage',
+            component: MenuManage,
+            meta: { title: '菜单管理', requiredRoles: ['ROLE_ADMIN'] }
+          },
+          {
+            path: 'agents',
+            name: 'AgentManage',
+            component: AgentManage,
+            meta: { title: '智能体管理', requiredRoles: ['ROLE_ADMIN'] }
           }
         ]
       }
@@ -100,7 +104,7 @@ const router = createRouter({
 })
 
 // 路由守卫
-router.beforeEach(async (to, from, next) => {
+router.beforeEach(async (to, _from, next) => {
   const userStore = useUserStore()
   const menuStore = useMenuStore()
 
@@ -124,6 +128,9 @@ router.beforeEach(async (to, from, next) => {
       try {
         await userStore.fetchUserInfo()
       } catch {
+        // token 无效，清除并跳转登录
+        localStorage.removeItem('token')
+        localStorage.removeItem('userInfo')
         next('/login')
         return
       }
@@ -143,8 +150,8 @@ router.beforeEach(async (to, from, next) => {
     }
   }
 
-  // 生成菜单
-  menuStore.generateMenus(userStore.isAdmin)
+  // 获取用户菜单（根据用户角色权限动态获取）
+  menuStore.fetchUserMenus()
 
   next()
 })

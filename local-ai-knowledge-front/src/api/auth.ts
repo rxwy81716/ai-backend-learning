@@ -1,5 +1,5 @@
 import request from '@/utils/request'
-import type { LoginRequest, RegisterRequest, LoginResponse, SysUser } from '@/types'
+import type { LoginRequest, RegisterRequest, LoginResponse } from '@/types'
 
 // 登录
 export function login(data: LoginRequest) {

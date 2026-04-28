@@ -45,16 +45,17 @@ public class UserService {
         user.setNickname(nickname != null ? nickname : username);
         userMapper.insert(user);
 
-        // 3. 分配默认角色（ROLE_USER）
-        SysRole defaultRole = userMapper.findRoleByCode("ROLE_USER");
-        if (defaultRole != null) {
-            userMapper.assignRole(user.getId(), defaultRole.getId());
+        // 3. 分配普通用户角色
+        String roleCode = "ROLE_USER";
+        SysRole role = userMapper.findRoleByCode(roleCode);
+        if (role != null) {
+            userMapper.assignRole(user.getId(), role.getId());
         }
 
-        log.info("用户注册成功 | username={}, id={}", username, user.getId());
+        log.info("用户注册成功 | username={}, id={}, roles=[{}]", username, user.getId(), roleCode);
 
-        // 4. 生成 Token
-        List<String> roles = List.of("ROLE_USER");
+        // 5. 生成 Token
+        List<String> roles = List.of(roleCode);
         String token = jwtUtil.generateToken(user.getId(), username, roles);
 
         return buildLoginResponse(user, roles, token);

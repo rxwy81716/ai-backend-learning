@@ -3,7 +3,8 @@ import { ref, computed } from 'vue'
 import { login as apiLogin, register as apiRegister, getCurrentUser } from '@/api/auth'
 import { storage } from '@/utils/storage'
 import router from '@/router'
-import type { LoginRequest, RegisterRequest, LoginResponse, SysUser } from '@/types'
+import { useMenuStore } from './menu'
+import type { LoginRequest, RegisterRequest, SysUser } from '@/types'
 
 export const useUserStore = defineStore('user', () => {
   // 状态
@@ -13,10 +14,12 @@ export const useUserStore = defineStore('user', () => {
 
   // 计算属性
   const isLoggedIn = computed(() => !!token.value)
-  const isAdmin = computed(() => userInfo.value?.roles?.some(r => r.roleCode === 'ROLE_ADMIN'))
+  // roles 是字符串数组 ["ROLE_USER", "ROLE_ADMIN"]
+  const isAdmin = computed(() => userInfo.value?.roles?.includes('ROLE_ADMIN') ?? false)
   const username = computed(() => userInfo.value?.username || '')
   const nickname = computed(() => userInfo.value?.nickname || userInfo.value?.username || '')
-  const roles = computed(() => userInfo.value?.roles || [])
+  // 返回角色编码数组
+  const roleCodes = computed(() => userInfo.value?.roles || [])
 
   // 登录
   async function login(data: LoginRequest) {
@@ -25,12 +28,17 @@ export const useUserStore = defineStore('user', () => {
       const res = await apiLogin(data)
       token.value = res.token
       storage.setToken(res.token)
-      
+
       // 获取用户完整信息
       const userRes = await getCurrentUser()
       userInfo.value = userRes
       storage.setUserInfo(userRes)
-      
+
+      // 登录后重新获取菜单
+      const menuStore = useMenuStore()
+      menuStore.clearMenus()
+      menuStore.fetchUserMenus()
+
       return res
     } finally {
       loading.value = false
@@ -53,6 +61,11 @@ export const useUserStore = defineStore('user', () => {
     token.value = ''
     userInfo.value = null
     storage.clear()
+
+    // 清空菜单
+    const menuStore = useMenuStore()
+    menuStore.clearMenus()
+
     router.push('/login')
   }
 
@@ -70,7 +83,7 @@ export const useUserStore = defineStore('user', () => {
 
   // 检查权限
   function hasRole(roleCode: string): boolean {
-    return roles.value.some(r => r.roleCode === roleCode)
+    return roleCodes.value.includes(roleCode)
   }
 
   function hasAnyRole(roleCodes: string[]): boolean {
@@ -85,7 +98,7 @@ export const useUserStore = defineStore('user', () => {
     isAdmin,
     username,
     nickname,
-    roles,
+    roles: roleCodes,
     login,
     register,
     logout,

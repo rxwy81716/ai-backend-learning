@@ -28,7 +28,8 @@
               :key="child.path"
               :index="child.path"
             >
-              {{ child.title }}
+              <el-icon v-if="child.icon"><component :is="child.icon" /></el-icon>
+              <span>{{ child.title }}</span>
             </el-menu-item>
           </el-sub-menu>
           
@@ -47,7 +48,7 @@
       <el-header class="header">
         <div class="header-left">
           <el-button
-            :icon="isCollapsed ? 'Expand' : 'Fold'"
+            :icon="isCollapsed ? Expand : Fold"
             text
             @click="isCollapsed = !isCollapsed"
           />

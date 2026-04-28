@@ -96,7 +96,8 @@ export interface SourceDocument {
 export interface Session {
   sessionId: string
   title?: string
-  createdAt?: string
+  firstQuestion?: string
+  createdAt?: number
   updatedAt?: string
 }
 

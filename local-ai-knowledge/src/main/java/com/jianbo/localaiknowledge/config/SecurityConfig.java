@@ -15,7 +15,11 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -42,8 +46,24 @@ public class SecurityConfig {
     }
 
     @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedHeaders(List.of("*"));
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
+        
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        return source;
+    }
+
+    @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
+            // 启用 CORS
+            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             // 无状态 API，关闭 CSRF 和 Session
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -54,6 +74,8 @@ public class SecurityConfig {
                 .requestMatchers("/auth/me").authenticated()
                 // 注册登录公开
                 .requestMatchers("/auth/**").permitAll()
+                // 用户接口：需要认证
+                .requestMatchers("/api/user/**").authenticated()
                 // 管理员接口：必须 ROLE_ADMIN
                 .requestMatchers("/api/admin/**").hasAuthority("ROLE_ADMIN")
                 // 其余 /api/**：允许匿名访问，由 RateLimitFilter 限流未认证请求
@@ -66,7 +88,7 @@ public class SecurityConfig {
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterAfter(rateLimitFilter, JwtAuthenticationFilter.class)
 
-            // 自定义 401 / 403 响应（返回 JSON 而非默认 HTML）
+            // 自定义 401 / 403 响应（返回统一 JSON 格式）
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, authException) -> {
                     response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
@@ -74,8 +96,9 @@ public class SecurityConfig {
                     response.setCharacterEncoding("UTF-8");
                     response.getWriter().write(
                             objectMapper.writeValueAsString(Map.of(
-                                    "error", "未认证，请先登录",
-                                    "status", 401)));
+                                    "code", 401,
+                                    "message", "未认证，请先登录",
+                                    "data", null)));
                 })
                 .accessDeniedHandler((request, response, accessDeniedException) -> {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
@@ -83,8 +106,9 @@ public class SecurityConfig {
                     response.setCharacterEncoding("UTF-8");
                     response.getWriter().write(
                             objectMapper.writeValueAsString(Map.of(
-                                    "error", "权限不足",
-                                    "status", 403)));
+                                    "code", 403,
+                                    "message", "权限不足",
+                                    "data", null)));
                 })
             );
 

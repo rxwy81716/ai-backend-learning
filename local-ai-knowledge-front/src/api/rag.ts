@@ -1,47 +1,23 @@
 import request from '@/utils/request'
-import type { ChatRequest, ChatResponse, Session, SystemPrompt, ChatMessage } from '@/types'
+import type { ChatRequest, ChatResponse, SystemPrompt, ChatMessage, Session } from '@/types'
 
-// ==================== 智能问答 ====================
+// ==================== 智能问答（自动路由 知识库 → 网络搜索 → LLM直答） ====================
 
 // 智能问答（同步）
-export function agentChat(data: ChatRequest) {
-  return request.post<any, ChatResponse>('/api/rag/agent/chat', data)
-}
-
-// 智能问答（SSE流式）
-export function agentChatStream(data: ChatRequest) {
-  return request.post<any, any>('/api/rag/agent/chat/stream', data)
-}
-
-// ==================== 单轮问答 ====================
-
-// 单轮RAG问答（同步）
-export function chat(data: { question: string; promptName?: string }) {
+export function chat(data: ChatRequest) {
   return request.post<any, ChatResponse>('/api/rag/chat', data)
 }
 
-// 单轮RAG问答（SSE流式）
-export function chatStream(data: { question: string; promptName?: string }) {
+// 智能问答（SSE流式）
+export function chatStream(data: ChatRequest) {
   return request.post<any, any>('/api/rag/chat/stream', data)
-}
-
-// ==================== 多轮对话 ====================
-
-// 多轮对话（同步）
-export function multiChat(data: ChatRequest) {
-  return request.post<any, ChatResponse>('/api/rag/multi-chat', data)
-}
-
-// 多轮对话（SSE流式）
-export function multiChatStream(data: ChatRequest) {
-  return request.post<any, any>('/api/rag/multi-chat/stream', data)
 }
 
 // ==================== 会话管理 ====================
 
 // 获取所有会话
 export function getSessions() {
-  return request.get<any, string[]>('/api/rag/sessions')
+  return request.get<any, Session[]>('/api/rag/sessions')
 }
 
 // 获取会话历史

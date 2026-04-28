@@ -19,7 +19,7 @@ spring:
   datasource:
     url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge
     username: jianbo
-    password: 123456
+    password: 525826
     driver-class-name: org.postgresql.Driver
 app:
   llm:

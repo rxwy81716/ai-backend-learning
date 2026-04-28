@@ -4,7 +4,7 @@ import router from '@/router'
 
 // 创建axios实例
 const service: AxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || '',
+  baseURL: import.meta.env.VITE_API_BASE_URL || 'http://localhost:12116',
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json'
@@ -16,8 +16,9 @@ service.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     // 添加token
     const token = localStorage.getItem('token')
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`
+    console.log('请求拦截器 - URL:', config.url, 'Token:', token ? '存在' : '不存在')
+    if (token) {
+      config.headers.set('Authorization', `Bearer ${token}`)
     }
     return config
   },
@@ -30,27 +31,26 @@ service.interceptors.request.use(
 // 响应拦截器
 service.interceptors.response.use(
   (response: AxiosResponse) => {
-    const res = response.data
-    
-    // 处理业务错误
-    if (response.status >= 200 && response.status < 300) {
-      return res
+    const data = response.data
+    // 统一响应格式处理
+    if (data && typeof data === 'object' && 'code' in data) {
+      if (data.code === 0) {
+        return data.data
+      } else {
+        // 业务错误，抛出给调用方处理
+        const error = new Error(data.message || '请求失败') as any
+        error.response = response
+        return Promise.reject(error)
+      }
     }
-    
-    ElMessage.error(res.message || '请求失败')
-    return Promise.reject(new Error(res.message || '请求失败'))
+    return data
   },
   async (error: AxiosError<{ error?: string; message?: string; status?: number }>) => {
     const response = error.response
     const status = response?.status
     
     if (status === 401) {
-      // Token过期或未认证
-      await ElMessageBox.confirm('登录已过期，请重新登录', '提示', {
-        confirmButtonText: '重新登录',
-        cancelButtonText: '取消',
-        type: 'warning'
-      }).catch(() => {})
+      // Token过期或未认证，清除并跳转登录
       localStorage.removeItem('token')
       localStorage.removeItem('userInfo')
       router.push('/login')
@@ -78,8 +78,25 @@ service.interceptors.response.use(
   }
 )
 
+// 添加常用方法扩展
+export const get = <T = any>(url: string, config?: InternalAxiosRequestConfig) => {
+  return service.get<T>(url, config)
+}
+
+export const post = <T = any>(url: string, data?: any, config?: InternalAxiosRequestConfig) => {
+  return service.post<T>(url, data, config)
+}
+
+export const put = <T = any>(url: string, data?: any, config?: InternalAxiosRequestConfig) => {
+  return service.put<T>(url, data, config)
+}
+
+export const del = <T = any>(url: string, config?: InternalAxiosRequestConfig) => {
+  return service.delete<T>(url, config)
+}
+
 // SSE流式请求
-export function requestStream<T = any>(
+export function requestStream(
   url: string,
   data: Record<string, any>,
   onMessage: (text: string) => void,
@@ -98,7 +115,10 @@ export function requestStream<T = any>(
   let buffer = ''
   let aborted = false
   
-  fetch(url, {
+  const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:12116'
+  const fullUrl = url.startsWith('http') ? url : baseURL + url
+  
+  fetch(fullUrl, {
     method: 'POST',
     headers,
     body: JSON.stringify(data)
@@ -114,9 +134,10 @@ export function requestStream<T = any>(
       }
       
       const decoder = new TextDecoder()
+      const readerRef = reader
       
       function read() {
-        reader.read().then(({ done, value }) => {
+        readerRef.read().then(({ done, value }) => {
           if (done || aborted) {
             if (buffer) {
               onMessage(buffer)
@@ -127,18 +148,18 @@ export function requestStream<T = any>(
           
           buffer += decoder.decode(value, { stream: true })
           
-          // 处理SSE数据
-          const lines = buffer.split('\n')
-          buffer = lines.pop() || ''
+          // 按行处理，处理 SSE 格式
+          let text = buffer.trim()
+          // 过滤掉所有 SSE data: 前缀（处理重复的 data:）
+          text = text.replace(/^data:\s*/gm, '')
+          // 移除 [DONE] 标记
+          text = text.replace(/\[DONE\]/g, '')
+          text = text.trim()
           
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const text = line.slice(6).trim()
-              if (text) {
-                onMessage(text)
-              }
-            }
+          if (text) {
+            onMessage(text)
           }
+          buffer = ''
           
           read()
         })

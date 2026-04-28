@@ -17,4 +17,6 @@ public class SysRole {
     private String name;
     private String description;
     private LocalDateTime createdAt;
+    /** 关联用户数量（临时字段，不存储） */
+    private Integer userCount;
 }

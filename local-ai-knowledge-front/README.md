@@ -66,7 +66,7 @@ src/
 创建 `.env.development` 文件：
 
 ```env
-VITE_API_BASE_URL=http://localhost:8080
+VITE_API_BASE_URL=http://localhost:12116
 ```
 
 ## 后端对接说明

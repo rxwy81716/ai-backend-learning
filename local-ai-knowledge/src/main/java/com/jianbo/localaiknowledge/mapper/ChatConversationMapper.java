@@ -36,6 +36,21 @@ public interface ChatConversationMapper {
     """)
     List<String> selectAllSessionIds();
 
+    @Select("""
+        SELECT content FROM chat_conversation
+        WHERE session_id = #{sessionId} AND role = 'user'
+        ORDER BY created_at ASC
+        LIMIT 1
+    """)
+    String selectFirstQuestion(@Param("sessionId") String sessionId);
+
+    @Select("""
+        SELECT EXTRACT(EPOCH FROM MIN(created_at)) * 1000::bigint
+        FROM chat_conversation
+        WHERE session_id = #{sessionId}
+    """)
+    Long selectCreatedAt(@Param("sessionId") String sessionId);
+
     @Delete("DELETE FROM chat_conversation WHERE session_id = #{sessionId}")
     void deleteBySession(@Param("sessionId") String sessionId);
 }

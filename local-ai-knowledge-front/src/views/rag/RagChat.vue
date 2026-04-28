@@ -11,21 +11,33 @@
           </el-button>
         </div>
         <div class="history-list">
+          <!-- 当前对话（默认） -->
           <div
-            v-for="sessionId in sessions"
-            :key="sessionId"
-            class="history-item"
-            :class="{ active: currentSessionId === sessionId }"
-            @click="selectSession(sessionId)"
+            class="history-item current-chat"
+            :class="{ active: !currentSessionId }"
+            @click="createNewSession"
           >
             <el-icon><ChatLineSquare /></el-icon>
-            <span class="session-text">{{ formatSessionId(sessionId) }}</span>
+            <span class="session-text">当前对话</span>
+            <el-tag v-if="!currentSessionId" size="small" type="primary">进行中</el-tag>
+          </div>
+
+          <!-- 历史会话列表 -->
+          <div
+            v-for="session in sessions"
+            :key="session.sessionId"
+            class="history-item"
+            :class="{ active: currentSessionId === session.sessionId }"
+            @click="selectSession(session.sessionId)"
+          >
+            <el-icon><ChatLineSquare /></el-icon>
+            <span class="session-text">{{ session.title || formatSessionId(session.sessionId) }}</span>
             <el-icon
               class="delete-btn"
-              @click.stop="deleteSession(sessionId)"
+              @click.stop="deleteSession(session.sessionId)"
             ><Delete /></el-icon>
           </div>
-          <el-empty v-if="sessions.length === 0" description="暂无会话" :image-size="60" />
+          <el-empty v-if="sessions.length === 0" description="暂无历史会话" :image-size="60" />
         </div>
       </div>
 
@@ -116,12 +128,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, computed } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { agentChat } from '@/api/rag'
 import { getSessions, getHistory, deleteSession as deleteSessionApi } from '@/api/rag'
+import type { Session } from '@/types'
 import { requestStream } from '@/utils/request'
-import { useUserStore } from '@/stores/user'
 import type { ChatMessage } from '@/types'
 import {
   Plus,
@@ -135,10 +146,8 @@ import {
   DocumentCopy
 } from '@element-plus/icons-vue'
 
-const userStore = useUserStore()
-
 const isHistoryCollapsed = ref(false)
-const sessions = ref<string[]>([])
+const sessions = ref<Session[]>([])
 const currentSessionId = ref<string>('')
 const messages = ref<ChatMessage[]>([])
 const question = ref('')
@@ -178,7 +187,7 @@ const createNewSession = () => {
 const deleteSession = async (sessionId: string) => {
   try {
     await deleteSessionApi(sessionId)
-    sessions.value = sessions.value.filter(s => s !== sessionId)
+    sessions.value = sessions.value.filter(s => s.sessionId !== sessionId)
     if (currentSessionId.value === sessionId) {
       createNewSession()
     }
@@ -215,8 +224,8 @@ const handleSend = async () => {
   isStreaming.value = true
   let fullAnswer = ''
 
-  const streamRequest = requestStream(
-    '/api/rag/agent/chat/stream',
+  requestStream(
+    '/api/rag/chat/stream',
     {
       question: q,
       sessionId: currentSessionId.value || undefined
@@ -360,6 +369,16 @@ onMounted(() => {
 
 .history-item.active {
   background: #409eff;
+  color: #fff;
+}
+
+.history-item.current-chat {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #fff;
+  font-weight: 500;
+}
+
+.history-item.current-chat .el-icon {
   color: #fff;
 }
 

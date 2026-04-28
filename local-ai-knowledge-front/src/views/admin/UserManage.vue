@@ -8,14 +8,19 @@
     <div class="user-list-card">
       <div class="card-header">
         <h3>用户列表</h3>
-        <el-button text @click="loadUsers">
-          <el-icon><Refresh /></el-icon>
-          刷新
-        </el-button>
+        <div class="header-actions">
+          <el-button type="primary" @click="openCreateDialog">
+            <el-icon><Plus /></el-icon>
+            新建用户
+          </el-button>
+          <el-button text @click="loadUsers">
+            <el-icon><Refresh /></el-icon>
+            刷新
+          </el-button>
+        </div>
       </div>
 
       <el-table :data="users" v-loading="loading" stripe>
-        <el-table-column prop="id" label="ID" width="80" />
         <el-table-column prop="username" label="用户名" width="150">
           <template #default="{ row }">
             <div class="user-cell">
@@ -38,12 +43,12 @@
           <template #default="{ row }">
             <el-tag
               v-for="role in row.roles"
-              :key="role.roleCode"
-              :type="role.roleCode === 'ROLE_ADMIN' ? 'danger' : 'success'"
+              :key="role.code"
+              :type="role.code === 'ROLE_ADMIN' ? 'danger' : role.code === 'ROLE_VIP' ? 'warning' : 'success'"
               size="small"
               style="margin-right: 4px"
             >
-              {{ role.roleName }}
+              {{ role.name }}
             </el-tag>
           </template>
         </el-table-column>
@@ -62,11 +67,15 @@
             {{ formatDate(row.createdAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="openRoleDialog(row)">
-              <el-icon><Setting /></el-icon>
-              分配角色
+            <el-button link type="primary" size="small" @click="openEditDialog(row)">
+              <el-icon><Edit /></el-icon>
+              编辑
+            </el-button>
+            <el-button link type="danger" size="small" @click="handleDelete(row)" :disabled="row.id === currentUserId">
+              <el-icon><Delete /></el-icon>
+              删除
             </el-button>
           </template>
         </el-table-column>
@@ -84,12 +93,12 @@
         <el-form-item label="当前角色">
           <el-tag
             v-for="role in roleForm.roles"
-            :key="role.roleCode"
+            :key="role.code"
             type="success"
             size="small"
             style="margin-right: 4px"
           >
-            {{ role.roleName }}
+            {{ role.name }}
           </el-tag>
         </el-form-item>
         <el-form-item label="新角色">
@@ -106,36 +115,103 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 新建/编辑用户对话框 -->
+    <el-dialog v-model="userDialogVisible" :title="isEdit ? '编辑用户' : '新建用户'" width="500px">
+      <el-form :model="userForm" :rules="userFormRules" ref="userFormRef" label-width="80px" label-position="top">
+        <el-form-item label="用户名" prop="username" v-if="!isEdit">
+          <el-input v-model="userForm.username" placeholder="请输入用户名" />
+        </el-form-item>
+        <el-form-item label="密码" :prop="isEdit ? '' : 'password'" v-if="!isEdit">
+          <el-input v-model="userForm.password" type="password" placeholder="请输入密码" show-password />
+        </el-form-item>
+        <el-form-item label="昵称" prop="nickname">
+          <el-input v-model="userForm.nickname" placeholder="请输入昵称" />
+        </el-form-item>
+        <el-form-item label="邮箱" prop="email">
+          <el-input v-model="userForm.email" placeholder="请输入邮箱" />
+        </el-form-item>
+        <el-form-item label="手机号" prop="phone">
+          <el-input v-model="userForm.phone" placeholder="请输入手机号" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="userDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="userDialogLoading" @click="handleSaveUser">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, computed } from 'vue'
-import { ElMessage } from 'element-plus'
-import { getUsers, assignRole, setUserEnabled } from '@/api/admin'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { getUsers, assignRole, setUserEnabled, createUser, updateUser, deleteUser } from '@/api/admin'
 import type { UserListItem } from '@/types'
 import { useUserStore } from '@/stores/user'
 import {
   Refresh,
   UserFilled,
-  Setting
+  Setting,
+  Plus,
+  Edit,
+  Delete
 } from '@element-plus/icons-vue'
 
 const userStore = useUserStore()
 
-const users = ref<UserListItem[]>([])
+const users = ref<any[]>([])
 const loading = ref(false)
 const roleDialogVisible = ref(false)
 const roleDialogLoading = ref(false)
+const userDialogVisible = ref(false)
+const userDialogLoading = ref(false)
+const isEdit = ref(false)
+const userFormRef = ref<FormInstance>()
 
 const currentUserId = computed(() => userStore.userInfo?.id)
 
 const roleForm = reactive({
   userId: 0,
   username: '',
-  roles: [] as any[],
+  roles: [] as string[],
   selectedRole: ''
 })
+
+const userForm = reactive({
+  id: 0,
+  username: '',
+  password: '',
+  nickname: '',
+  email: '',
+  phone: ''
+})
+
+const userFormRules: FormRules = {
+  username: [
+    { required: true, message: '请输入用户名', trigger: 'blur' },
+    { min: 3, max: 20, message: '用户名长度在 3 到 20 个字符', trigger: 'blur' }
+  ],
+  password: [
+    { required: true, message: '请输入密码', trigger: 'blur' },
+    { min: 6, message: '密码长度至少 6 个字符', trigger: 'blur' }
+  ],
+  email: [
+    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' }
+  ]
+}
+
+// 角色编码转名称
+const getRoleName = (code: string) => {
+  const roleNames: Record<string, string> = {
+    'ROLE_ADMIN': '管理员',
+    'ROLE_USER': '普通用户',
+    'ROLE_VIP': '会员'
+  }
+  return roleNames[code] || code
+}
 
 // 加载用户列表
 const loadUsers = async () => {
@@ -151,11 +227,11 @@ const loadUsers = async () => {
 }
 
 // 打开角色分配对话框
-const openRoleDialog = (user: UserListItem) => {
+const openRoleDialog = (user: any) => {
   roleForm.userId = user.id
   roleForm.username = user.username
-  roleForm.roles = user.roles
-  roleForm.selectedRole = user.roles[0]?.roleCode || 'ROLE_USER'
+  roleForm.roles = user.roles || []
+  roleForm.selectedRole = user.roles?.[0]?.code || 'ROLE_USER'
   roleDialogVisible.value = true
 }
 
@@ -180,7 +256,7 @@ const handleAssignRole = async () => {
 }
 
 // 切换启用状态
-const handleToggleEnabled = async (user: UserListItem & { _loading?: boolean }) => {
+const handleToggleEnabled = async (user: any) => {
   user._loading = true
   try {
     await setUserEnabled(user.id, user.enabled)
@@ -191,6 +267,89 @@ const handleToggleEnabled = async (user: UserListItem & { _loading?: boolean }) 
     ElMessage.error('操作失败')
   } finally {
     user._loading = false
+  }
+}
+
+// 打开新建用户对话框
+const openCreateDialog = () => {
+  isEdit.value = false
+  userForm.id = 0
+  userForm.username = ''
+  userForm.password = ''
+  userForm.nickname = ''
+  userForm.email = ''
+  userForm.phone = ''
+  userDialogVisible.value = true
+}
+
+// 打开编辑用户对话框
+const openEditDialog = (user: any) => {
+  isEdit.value = true
+  userForm.id = user.id
+  userForm.username = user.username
+  userForm.password = ''
+  userForm.nickname = user.nickname || ''
+  userForm.email = user.email || ''
+  userForm.phone = user.phone || ''
+  userDialogVisible.value = true
+}
+
+// 保存用户（新建或编辑）
+const handleSaveUser = async () => {
+  if (!userFormRef.value) return
+  
+  await userFormRef.value.validate(async (valid) => {
+    if (!valid) return
+    
+    userDialogLoading.value = true
+    try {
+      if (isEdit.value) {
+        await updateUser(userForm.id, {
+          nickname: userForm.nickname,
+          email: userForm.email,
+          phone: userForm.phone
+        })
+        ElMessage.success('用户更新成功')
+      } else {
+        await createUser({
+          username: userForm.username,
+          password: userForm.password,
+          nickname: userForm.nickname,
+          email: userForm.email,
+          phone: userForm.phone
+        })
+        ElMessage.success('用户创建成功')
+      }
+      userDialogVisible.value = false
+      loadUsers()
+    } catch (error: any) {
+      ElMessage.error(error.message || '操作失败')
+    } finally {
+      userDialogLoading.value = false
+    }
+  })
+}
+
+// 删除用户
+const handleDelete = async (user: any) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除用户 "${user.username}" 吗？此操作不可恢复。`,
+      '删除确认',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning'
+      }
+    )
+    
+    await deleteUser(user.id)
+    ElMessage.success('用户删除成功')
+    loadUsers()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      ElMessage.error(error.message || '删除失败')
+    }
   }
 }
 
@@ -245,6 +404,11 @@ onMounted(() => {
   margin: 0;
   font-size: 16px;
   color: #303133;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .user-cell {
