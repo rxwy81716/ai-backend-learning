@@ -100,17 +100,17 @@ onMounted(() => {
 // 登录
 const handleLogin = async () => {
   if (!formRef.value) return
-  
+
   await formRef.value.validate(async (valid) => {
     if (!valid) return
-    
+
     loading.value = true
     try {
       await userStore.login({
         username: form.username,
         password: form.password
       })
-      
+
       // 记住密码
       if (form.remember) {
         storage.setRemember({
@@ -121,10 +121,13 @@ const handleLogin = async () => {
       } else {
         storage.removeRemember()
       }
-      
+
       ElMessage.success('登录成功')
       router.push('/rag')
-    } catch (error) {
+    } catch (error: any) {
+      // 显示后端返回的错误信息
+      const errorMsg = error?.response?.data?.message || error?.message || '登录失败，请稍后重试'
+      ElMessage.error(errorMsg)
       console.error('登录失败:', error)
     } finally {
       loading.value = false
@@ -135,19 +138,22 @@ const handleLogin = async () => {
 
 <style scoped>
 .login-container {
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
 }
 
 .login-box {
-  width: 400px;
+  width: 100%;
+  max-width: 400px;
   padding: 40px;
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-sizing: border-box;
 }
 
 .login-header {
@@ -192,5 +198,24 @@ const handleLogin = async () => {
   height: 48px;
   font-size: 16px;
   letter-spacing: 4px;
+}
+
+/* 移动端适配 */
+@media screen and (max-width: 480px) {
+  .login-container {
+    padding: 10px;
+  }
+
+  .login-box {
+    padding: 30px 20px;
+  }
+
+  .login-header h1 {
+    font-size: 24px;
+  }
+
+  .login-header p {
+    font-size: 13px;
+  }
 }
 </style>

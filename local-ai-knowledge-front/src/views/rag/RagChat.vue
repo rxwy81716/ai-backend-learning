@@ -502,6 +502,7 @@ onMounted(() => {
   border-radius: 12px;
   line-height: 1.6;
   font-size: 14px;
+  word-break: break-word;
 }
 
 .message-item.user .message-text {
@@ -570,5 +571,91 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 12px;
   margin-top: 12px;
+}
+
+/* 移动端适配 */
+@media screen and (max-width: 768px) {
+  .rag-chat-container {
+    height: calc(100vh - 60px);
+  }
+
+  .chat-wrapper {
+    border-radius: 0;
+  }
+
+  .history-panel {
+    position: fixed;
+    top: 60px;
+    left: 0;
+    width: 250px !important;
+    height: calc(100vh - 60px);
+    z-index: 999;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+  }
+
+  .history-panel:not(.is-collapsed) {
+    transform: translateX(0);
+  }
+
+  .history-panel.is-collapsed {
+    width: 250px !important;
+  }
+
+  .chat-header {
+    padding: 12px 10px;
+    gap: 8px;
+  }
+
+  .chat-header h2 {
+    font-size: 16px;
+  }
+
+  .message-list {
+    padding: 10px;
+  }
+
+  .message-content {
+    max-width: 85%;
+    margin: 0 8px;
+  }
+
+  .message-text {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+
+  .input-area {
+    padding: 10px;
+  }
+
+  .mode-selector {
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .input-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .input-actions .el-button {
+    width: 100%;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .message-content {
+    max-width: 90%;
+  }
+
+  .welcome-message {
+    padding: 30px 15px;
+  }
+
+  .welcome-message h3 {
+    font-size: 18px;
+  }
 }
 </style>

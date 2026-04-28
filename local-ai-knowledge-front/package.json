@@ -5,8 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:test": "vite --mode test",
     "build": "vue-tsc && vite build",
-    "preview": "vite preview"
+    "build:test": "vue-tsc && vite build --mode test",
+    "preview": "vite preview",
+    "preview:test": "vite preview --mode test"
   },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",

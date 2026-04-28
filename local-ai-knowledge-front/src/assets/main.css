@@ -100,3 +100,57 @@ html, body {
 .fade-leave-to {
   opacity: 0;
 }
+
+/* 移动端全局适配 */
+@media screen and (max-width: 768px) {
+  .page-container {
+    padding: 10px;
+  }
+
+  .card-container {
+    padding: 15px;
+  }
+
+  /* 表格横向滚动 */
+  .el-table {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  /* 对话框全屏 */
+  .el-dialog {
+    width: 90% !important;
+    max-width: 90% !important;
+  }
+
+  /* 表单元素适配 */
+  .el-form-item {
+    margin-bottom: 18px;
+  }
+
+  /* 卡片在移动端的间距 */
+  .el-card {
+    margin-bottom: 10px;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .page-container {
+    padding: 8px;
+  }
+
+  .card-container {
+    padding: 12px;
+  }
+
+  /* 隐藏非必要的文字 */
+  .mobile-hide {
+    display: none !important;
+  }
+
+  /* 按钮全宽 */
+  .mobile-full-width {
+    width: 100% !important;
+  }
+}
+

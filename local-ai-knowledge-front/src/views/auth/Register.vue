@@ -120,10 +120,10 @@ const rules: FormRules = {
 // 注册
 const handleRegister = async () => {
   if (!formRef.value) return
-  
+
   await formRef.value.validate(async (valid) => {
     if (!valid) return
-    
+
     loading.value = true
     try {
       await userStore.register({
@@ -131,10 +131,13 @@ const handleRegister = async () => {
         password: form.password,
         nickname: form.nickname || undefined
       })
-      
+
       ElMessage.success('注册成功，请登录')
       router.push('/login')
-    } catch (error) {
+    } catch (error: any) {
+      // 显示后端返回的错误信息
+      const errorMsg = error?.response?.data?.message || error?.message || '注册失败，请稍后重试'
+      ElMessage.error(errorMsg)
       console.error('注册失败:', error)
     } finally {
       loading.value = false
@@ -145,19 +148,22 @@ const handleRegister = async () => {
 
 <style scoped>
 .register-container {
-  height: 100vh;
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 20px;
 }
 
 .register-box {
-  width: 400px;
+  width: 100%;
+  max-width: 400px;
   padding: 40px;
   background: #fff;
   border-radius: 12px;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-sizing: border-box;
 }
 
 .register-header {
@@ -201,5 +207,24 @@ const handleRegister = async () => {
   height: 48px;
   font-size: 16px;
   letter-spacing: 4px;
+}
+
+/* 移动端适配 */
+@media screen and (max-width: 480px) {
+  .register-container {
+    padding: 10px;
+  }
+
+  .register-box {
+    padding: 30px 20px;
+  }
+
+  .register-header h1 {
+    font-size: 24px;
+  }
+
+  .register-header p {
+    font-size: 13px;
+  }
 }
 </style>
