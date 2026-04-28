@@ -1,15 +1,23 @@
 package com.jianbo.localaiknowledge.controller;
 
+import com.jianbo.localaiknowledge.model.DocumentChunk;
 import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.service.DocumentParseService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -40,19 +48,22 @@ public class DocumentController {
 
     /**
      * 上传文档
+     * @param docScope 文档范围：PUBLIC=公开 / PRIVATE=私有（默认）
      */
     @PostMapping("/upload")
     public Map<String, Object> upload(@RequestParam("file") MultipartFile file,
-                                      @RequestParam(value = "userId", required = false) String userIdParam) {
+                                      @RequestParam(value = "docScope", required = false) String docScope) {
         String userId = SecurityUtil.getCurrentUserIdStr();
-        if (userId == null) {
-            userId = userIdParam;
-        }
         if (file.isEmpty()) {
             throw new IllegalArgumentException("文件不能为空");
         }
         if (file.getSize() > MAX_FILE_SIZE) {
             throw new IllegalArgumentException("文件大小不能超过50MB");
+        }
+
+        // 默认私有
+        if (docScope == null || docScope.isBlank()) {
+            docScope = "PRIVATE";
         }
 
         String originalName = file.getOriginalFilename();
@@ -72,7 +83,6 @@ public class DocumentController {
 
             log.info("文件已保存: {} ({}字节)", filePath, file.getSize());
 
-            String docScope = (userId != null && !userId.isBlank()) ? "PRIVATE" : "PUBLIC";
             DocumentTask task = documentParseService.registerTask(
                     taskId, originalName, filePath.toString(), file.getSize(), userId, docScope);
 
@@ -82,7 +92,8 @@ public class DocumentController {
                     "taskId", taskId,
                     "fileName", originalName,
                     "fileSize", file.getSize(),
-                    "status", task.getStatus()
+                    "status", task.getStatus(),
+                    "docScope", docScope
             );
         } catch (IOException e) {
             log.error("文件保存失败: {}", e.getMessage(), e);
@@ -103,11 +114,12 @@ public class DocumentController {
     }
 
     /**
-     * 查询所有任务列表
+     * 查询任务列表（公开文档 + 当前用户私有文档）
      */
     @GetMapping("/tasks")
     public List<DocumentTask> tasks() {
-        return documentParseService.getAllTasks();
+        String userId = SecurityUtil.getCurrentUserIdStr();
+        return documentParseService.getAccessibleTasks(userId);
     }
 
     /**
@@ -123,5 +135,69 @@ public class DocumentController {
                 "task", task,
                 "logs", documentParseService.getTaskLogs(taskId)
         );
+    }
+
+    /**
+     * 查询文档分段详情（从 PG document_chunk 读取）
+     */
+    @GetMapping("/chunks/{taskId}")
+    public Map<String, Object> chunks(@PathVariable String taskId) {
+        DocumentTask task = documentParseService.getTask(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        List<DocumentChunk> chunks = documentParseService.getDocumentChunks(taskId);
+        return Map.of(
+                "task", task,
+                "chunks", chunks,
+                "totalChunks", chunks.size()
+        );
+    }
+
+    /**
+     * 删除文档（仅允许删除自己的私有文档或公开文档）
+     */
+    @DeleteMapping("/{taskId}")
+    public Map<String, Object> delete(@PathVariable String taskId) {
+        DocumentTask task = documentParseService.getTask(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+        String userId = SecurityUtil.getCurrentUserIdStr();
+        // 权限校验：只能删除自己的文档，管理员可删除所有
+        if (!SecurityUtil.isAdmin()) {
+            if (userId == null || !userId.equals(task.getUserId())) {
+                throw new IllegalArgumentException("无权删除他人的文档");
+            }
+        }
+        documentParseService.deleteTask(taskId);
+        return Map.of("message", "删除成功");
+    }
+
+    /**
+     * 下载文档
+     */
+    @GetMapping("/download/{taskId}")
+    public ResponseEntity<Resource> download(@PathVariable String taskId) throws IOException {
+        DocumentTask task = documentParseService.getTask(taskId);
+        if (task == null) {
+            throw new IllegalArgumentException("任务不存在");
+        }
+
+        Path filePath = Paths.get(task.getFilePath());
+        if (!Files.exists(filePath)) {
+            throw new IllegalArgumentException("文件不存在");
+        }
+
+        Resource resource = new FileSystemResource(filePath);
+        String encodedName = URLEncoder.encode(task.getFileName(), StandardCharsets.UTF_8)
+                .replace("+", "%20");
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION,
+                        "attachment; filename=\"" + encodedName + "\"; filename*=UTF-8''" + encodedName)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_OCTET_STREAM_VALUE)
+                .contentLength(resource.contentLength())
+                .body(resource);
     }
 }

@@ -78,50 +78,60 @@ public class RagAgentService {
      * @param question   用户问题
      * @param userId     用户 ID（null = 只看公共文档）
      * @param promptName SystemPrompt 名称（null = 默认）
+     * @param chatMode   问答模式：KNOWLEDGE=知识库模式（默认） / LLM=LLM直答模式
      */
-    public Map<String, Object> chat(String sessionId, String question, String userId, String promptName) {
+    public Map<String, Object> chat(String sessionId, String question, String userId, String promptName, String chatMode) {
         long t0 = System.currentTimeMillis();
-
-        // ===== Agent 1: 知识库检索 =====
-        List<Document> docs = (userId != null && !userId.isBlank())
-                ? searchService.searchWithOwnership(question, userId, RAG_TOP_K, SIMILARITY_THRESHOLD)
-                : searchService.search(question, RAG_TOP_K, SIMILARITY_THRESHOLD);
-
-        long t1 = System.currentTimeMillis();
-        log.info("⏱ ES检索 {}ms | hitDocs={}", t1 - t0, docs.size());
 
         String source;
         String filledPrompt;
+        List<Document> docs = List.of();
 
-        if (!docs.isEmpty()) {
-            // ===== 知识库命中：最可靠 =====
-            source = "knowledge_base";
-            String ctx = buildDocContext(docs);
-            String sysPrompt = loadSystemPrompt(promptName);
-            filledPrompt = sysPrompt.replace("{context}", ctx);
-            log.info("Agent 路由 → 知识库 | userId={}, hitDocs={}", userId, docs.size());
-        } else if (webSearchService.isEnabled()) {
-            // ===== Agent 2: 网络搜索降级 =====
-            log.info("知识库无结果，尝试网络搜索 | question={}", question);
-            var webResults = webSearchService.search(question);
-            if (!webResults.isEmpty()) {
-                source = "web_search";
-                String ctx = webSearchService.formatAsContext(webResults);
-                String sysPrompt = loadSystemPrompt(promptName);
-                filledPrompt = sysPrompt.replace("{context}", ctx);
-                log.info("Agent 路由 → 网络搜索 | 结果数={}", webResults.size());
-            } else {
-                // 网络搜索也无结果 → LLM 直答
-                source = "llm_direct";
-                filledPrompt = LLM_DIRECT_PROMPT;
-                log.info("Agent 路由 → LLM 直答（知识库+网搜均无结果）");
-            }
-        } else {
-            // ===== Agent 3: LLM 直答（网络搜索未启用） =====
+        if ("LLM".equalsIgnoreCase(chatMode)) {
+            // ===== LLM 直答模式：跳过知识库检索，直接调用大模型 =====
             source = "llm_direct";
             filledPrompt = LLM_DIRECT_PROMPT;
-            log.info("Agent 路由 → LLM 直答（知识库无结果）");
+            log.info("用户选择 LLM 直答模式 | question={}", question);
+        } else {
+            // ===== 知识库模式（默认）：检索私有+公有知识库 =====
+            docs = (userId != null && !userId.isBlank())
+                    ? searchService.searchWithOwnership(question, userId, RAG_TOP_K, SIMILARITY_THRESHOLD)
+                    : searchService.search(question, RAG_TOP_K, SIMILARITY_THRESHOLD);
+
+            long t1 = System.currentTimeMillis();
+            log.info("⏱ ES检索 {}ms | hitDocs={}", t1 - t0, docs.size());
+
+            if (!docs.isEmpty()) {
+                // ===== 知识库命中：最可靠 =====
+                source = "knowledge_base";
+                String ctx = buildDocContext(docs);
+                String sysPrompt = loadSystemPrompt(promptName);
+                filledPrompt = sysPrompt.replace("{context}", ctx);
+                log.info("Agent 路由 → 知识库 | userId={}, hitDocs={}", userId, docs.size());
+            } else if (webSearchService.isEnabled()) {
+                // ===== Agent 2: 网络搜索降级 =====
+                log.info("知识库无结果，尝试网络搜索 | question={}", question);
+                var webResults = webSearchService.search(question);
+                if (!webResults.isEmpty()) {
+                    source = "web_search";
+                    String ctx = webSearchService.formatAsContext(webResults);
+                    String sysPrompt = loadSystemPrompt(promptName);
+                    filledPrompt = sysPrompt.replace("{context}", ctx);
+                    log.info("Agent 路由 → 网络搜索 | 结果数={}", webResults.size());
+                } else {
+                    source = "llm_direct";
+                    filledPrompt = LLM_DIRECT_PROMPT;
+                    log.info("Agent 路由 → LLM 直答（知识库+网搜均无结果）");
+                }
+            } else {
+                // ===== Agent 3: LLM 直答（网络搜索未启用） =====
+                source = "llm_direct";
+                filledPrompt = LLM_DIRECT_PROMPT;
+                log.info("Agent 路由 → LLM 直答（知识库无结果）");
+            }
         }
+
+        long t1 = System.currentTimeMillis();
 
         List<Message> messages = new ArrayList<>();
         messages.add(new SystemMessage(filledPrompt));
@@ -176,35 +186,45 @@ public class RagAgentService {
 
     /**
      * 智能问答（SSE 流式）—— 自动路由
+     *
+     * @param chatMode 问答模式：KNOWLEDGE=知识库模式（默认） / LLM=LLM直答模式
      */
-    public Flux<String> chatStream(String sessionId, String question, String userId, String promptName) {
-        // Agent 1: 知识库检索
-        List<Document> docs = (userId != null && !userId.isBlank())
-                ? searchService.searchWithOwnership(question, userId, RAG_TOP_K, SIMILARITY_THRESHOLD)
-                : searchService.search(question, RAG_TOP_K, SIMILARITY_THRESHOLD);
-
+    public Flux<String> chatStream(String sessionId, String question, String userId, String promptName, String chatMode) {
         String source;
         String filledPrompt;
+        List<Document> docs = List.of();
 
-        if (!docs.isEmpty()) {
-            source = "knowledge_base";
-            String ctx = buildDocContext(docs);
-            String sysPrompt = loadSystemPrompt(promptName);
-            filledPrompt = sysPrompt.replace("{context}", ctx);
-        } else if (webSearchService.isEnabled()) {
-            var webResults = webSearchService.search(question);
-            if (!webResults.isEmpty()) {
-                source = "web_search";
-                String ctx = webSearchService.formatAsContext(webResults);
+        if ("LLM".equalsIgnoreCase(chatMode)) {
+            // ===== LLM 直答模式 =====
+            source = "llm_direct";
+            filledPrompt = LLM_DIRECT_PROMPT;
+            log.info("用户选择 LLM 直答模式（流式） | question={}", question);
+        } else {
+            // ===== 知识库模式（默认） =====
+            docs = (userId != null && !userId.isBlank())
+                    ? searchService.searchWithOwnership(question, userId, RAG_TOP_K, SIMILARITY_THRESHOLD)
+                    : searchService.search(question, RAG_TOP_K, SIMILARITY_THRESHOLD);
+
+            if (!docs.isEmpty()) {
+                source = "knowledge_base";
+                String ctx = buildDocContext(docs);
                 String sysPrompt = loadSystemPrompt(promptName);
                 filledPrompt = sysPrompt.replace("{context}", ctx);
+            } else if (webSearchService.isEnabled()) {
+                var webResults = webSearchService.search(question);
+                if (!webResults.isEmpty()) {
+                    source = "web_search";
+                    String ctx = webSearchService.formatAsContext(webResults);
+                    String sysPrompt = loadSystemPrompt(promptName);
+                    filledPrompt = sysPrompt.replace("{context}", ctx);
+                } else {
+                    source = "llm_direct";
+                    filledPrompt = LLM_DIRECT_PROMPT;
+                }
             } else {
                 source = "llm_direct";
                 filledPrompt = LLM_DIRECT_PROMPT;
             }
-        } else {
-            source = "llm_direct";
-            filledPrompt = LLM_DIRECT_PROMPT;
         }
 
         List<Message> messages = new ArrayList<>();

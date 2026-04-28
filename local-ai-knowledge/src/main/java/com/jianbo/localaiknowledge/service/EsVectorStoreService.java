@@ -78,6 +78,29 @@ public class EsVectorStoreService {
     log.info("ES 已删除 {} 条", documentIds.size());
   }
 
+  /** 按来源名称删除ES向量文档 */
+  public void deleteBySource(String source, String userId) throws IOException {
+    Request request = new Request("POST", "/" + INDEX_NAME + "/_delete_by_query");
+
+    // ES mapping 中 metadata.source 是 text 类型（有 .keyword 子字段）
+    // term 查询只能匹配 keyword，对 text 字段无效，必须用 metadata.source.keyword
+    StringBuilder queryBuilder = new StringBuilder();
+    queryBuilder.append("{\"query\":{\"bool\":{\"must\":[");
+    queryBuilder.append("{\"term\":{\"metadata.source.keyword\":\"")
+            .append(source.replace("\"", "\\\""))
+            .append("\"}}");
+    if (userId != null && !userId.isBlank()) {
+      queryBuilder.append(",{\"term\":{\"metadata.user_id.keyword\":\"")
+              .append(userId.replace("\"", "\\\""))
+              .append("\"}}");
+    }
+    queryBuilder.append("]}}}");
+
+    request.setJsonEntity(queryBuilder.toString());
+    restClient.performRequest(request);
+    log.info("ES 已按来源删除: source={}, userId={}", source, userId);
+  }
+
   /**
    * 带用户归属的文档入库（用户上传为 PRIVATE，爬虫为 PUBLIC）
    *

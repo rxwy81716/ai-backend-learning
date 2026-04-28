@@ -11,6 +11,9 @@ const Layout = () => import('@/layout/index.vue')
 // RAG 智能问答
 const RagChat = () => import('@/views/rag/RagChat.vue')
 
+// 文档管理
+const DocumentManage = () => import('@/views/document/DocumentManage.vue')
+
 // 管理员页面
 const UserManage = () => import('@/views/admin/UserManage.vue')
 const RoleManage = () => import('@/views/admin/RoleManage.vue')
@@ -61,6 +64,12 @@ const privateRoutes: RouteRecordRaw[] = [
         name: 'RagChat',
         component: RagChat,
         meta: { title: '智能问答', icon: 'ChatDotRound' }
+      },
+      {
+        path: 'documents',
+        name: 'DocumentManage',
+        component: DocumentManage,
+        meta: { title: '文档管理', icon: 'Document', requiredRoles: ['ROLE_USER', 'ROLE_ADMIN'] }
       },
       {
         path: 'admin',

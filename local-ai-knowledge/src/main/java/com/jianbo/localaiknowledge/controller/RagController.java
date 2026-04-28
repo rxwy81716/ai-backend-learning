@@ -50,6 +50,7 @@ public class RagController {
 
     /**
      * 智能问答（同步）
+     * @param chatMode 问答模式：KNOWLEDGE=知识库模式（默认） / LLM=LLM直答模式
      */
     @PostMapping("/chat")
     public Map<String, Object> chat(@RequestBody Map<String, String> body) {
@@ -66,13 +67,15 @@ public class RagController {
             userId = body.get("userId");
         }
         String promptName = body.get("promptName");
+        String chatMode = body.getOrDefault("chatMode", "KNOWLEDGE");
 
-        return ragAgentService.chat(sessionId, question, userId, promptName);
+        return ragAgentService.chat(sessionId, question, userId, promptName, chatMode);
     }
 
     /**
      * 智能问答（SSE 流式）
      * 注意：SSE 流不被统一响应包装
+     * @param chatMode 问答模式：KNOWLEDGE=知识库模式（默认） / LLM=LLM直答模式
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStream(@RequestBody Map<String, String> body) {
@@ -89,18 +92,24 @@ public class RagController {
             userId = body.get("userId");
         }
         String promptName = body.get("promptName");
+        String chatMode = body.getOrDefault("chatMode", "KNOWLEDGE");
 
-        return ragAgentService.chatStream(sessionId, question, userId, promptName);
+        return ragAgentService.chatStream(sessionId, question, userId, promptName, chatMode);
     }
 
     // ==================== 会话管理 ====================
 
     /**
-     * 获取所有会话列表
+     * 获取用户所有会话列表
      */
     @GetMapping("/sessions")
     public List<ChatSession> sessions() {
-        List<String> sessionIds = conversationMapper.selectAllSessionIds();
+        //获取用户id
+        String userId = SecurityUtil.getCurrentUserIdStr();
+        if (userId == null) {
+            return List.of();
+        }
+        List<String> sessionIds = conversationMapper.selectByUserId(userId);
         return sessionIds.stream().map(sessionId -> {
             ChatSession session = new ChatSession();
             session.setSessionId(sessionId);

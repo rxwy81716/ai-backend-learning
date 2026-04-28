@@ -13,7 +13,14 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
 /**
- * Elasticsearch VectorStore 配置（本地 Ollama bge-m3 embedding + ES）
+ * 双 VectorStore 配置（ES + PG 共存）
+ *
+ * <p>ES = @Primary Bean 名 "esVectorStore"（检索优先走 ES）
+ * <p>PG = Spring AI 自动配置的 PgVectorStore，Bean 名 "vectorStore"
+ *
+ * <p>注入方式：
+ *   @Autowired                                          → ES（@Primary）
+ *   @Autowired @Qualifier("vectorStore") VectorStore    → PG
  */
 @Configuration
 public class VectorStoreConfig {
@@ -24,7 +31,7 @@ public class VectorStoreConfig {
   private Integer esDimensions;
 
   /**
-   * ES VectorStore — 唯一的向量库，设为 @Primary
+   * ES VectorStore 设为 @Primary（检索优先）
    */
   @Bean
   @Primary
@@ -35,7 +42,6 @@ public class VectorStoreConfig {
     ElasticsearchVectorStoreOptions options = new ElasticsearchVectorStoreOptions();
     options.setIndexName(esIndexName);
     options.setDimensions(esDimensions);
-    // options.setSimilarity(SimilarityFunction.cosine);  // 默认就是 cosine
     return ElasticsearchVectorStore.builder(restClient, embeddingModel)
             .options(options)
             .initializeSchema(true)

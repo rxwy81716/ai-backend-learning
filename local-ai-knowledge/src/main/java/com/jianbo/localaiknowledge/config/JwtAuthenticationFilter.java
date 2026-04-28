@@ -35,9 +35,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     FilterChain filterChain) throws ServletException, IOException {
 
         String header = request.getHeader("Authorization");
+        String token = null;
 
         if (header != null && header.startsWith("Bearer ")) {
-            String token = header.substring(7);
+            token = header.substring(7);
+        } else {
+            // 支持通过 query param 传递 token（用于文件下载等场景）
+            token = request.getParameter("token");
+        }
+
+        if (token != null && !token.isBlank()) {
             try {
                 if (jwtUtil.isValid(token)) {
                     Long userId = jwtUtil.getUserId(token);

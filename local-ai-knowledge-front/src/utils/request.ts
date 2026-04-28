@@ -31,6 +31,12 @@ service.interceptors.request.use(
 // 响应拦截器
 service.interceptors.response.use(
   (response: AxiosResponse) => {
+    // SSE / 流式响应直接返回，不做统一包装解析
+    const contentType = String(response.headers['content-type'] || '')
+    if (contentType.includes('text/event-stream') || contentType.includes('application/octet-stream')) {
+      return response.data
+    }
+
     const data = response.data
     // 统一响应格式处理
     if (data && typeof data === 'object' && 'code' in data) {

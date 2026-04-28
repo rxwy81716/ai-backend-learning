@@ -32,9 +32,10 @@ public interface ChatConversationMapper {
 
     @Select("""
         SELECT DISTINCT session_id FROM chat_conversation
+        where user_id = #{userId} 
         ORDER BY session_id
     """)
-    List<String> selectAllSessionIds();
+    List<String> selectByUserId(@Param("userId")String userId);
 
     @Select("""
         SELECT content FROM chat_conversation

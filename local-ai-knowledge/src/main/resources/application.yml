@@ -15,7 +15,7 @@ spring:
         index-type: hnsw              # 索引类型：HNSW（推荐）或 IVFFlat
         distance-type: COSINE_DISTANCE # 距离算法：余弦相似度
         dimensions: 1536              # 向量维度（必须与模型一致）
-        initialize-schema: false      # M5版本需要手动初始化，改为false
+        initialize-schema: true       # 自动创建 vector_store 表
         schema-name: public
         table-name: vector_store
         # 向量索引配置
@@ -59,6 +59,7 @@ app:
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 logging:
   level:
-    org.springframework.ai: DEBUG
+    org.springframework.ai: INFO

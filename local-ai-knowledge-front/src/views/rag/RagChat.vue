@@ -98,11 +98,30 @@
 
         <!-- 输入区域 -->
         <div class="input-area">
+          <div class="mode-selector">
+            <el-radio-group v-model="chatMode" size="small">
+              <el-radio-button value="KNOWLEDGE">
+                <el-icon><Collection /></el-icon>
+                知识库模式
+              </el-radio-button>
+              <el-radio-button value="LLM">
+                <el-icon><ChatDotRound /></el-icon>
+                LLM 直答
+              </el-radio-button>
+            </el-radio-group>
+            <el-tooltip
+              v-if="chatMode === 'LLM'"
+              content="LLM直答模式不经过知识库，回答基于AI通用知识，仅供参考"
+              placement="top"
+            >
+              <el-tag type="warning" size="small" class="mode-tip">可能有幻觉</el-tag>
+            </el-tooltip>
+          </div>
           <el-input
             v-model="question"
             type="textarea"
             :rows="3"
-            placeholder="请输入您的问题，按 Enter 发送，Shift+Enter 换行"
+            :placeholder="chatMode === 'KNOWLEDGE' ? '请输入您的问题，将基于知识库回答' : '请输入您的问题，将直接由AI回答'"
             resize="none"
             @keydown.enter.exact.prevent="handleSend"
           />
@@ -131,7 +150,7 @@
 import { ref, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getSessions, getHistory, deleteSession as deleteSessionApi } from '@/api/rag'
-import type { Session } from '@/types'
+import type { Session, ChatMode } from '@/types'
 import { requestStream } from '@/utils/request'
 import type { ChatMessage } from '@/types'
 import {
@@ -143,7 +162,8 @@ import {
   UserFilled,
   ChatDotRound,
   Promotion,
-  DocumentCopy
+  DocumentCopy,
+  Collection
 } from '@element-plus/icons-vue'
 
 const isHistoryCollapsed = ref(false)
@@ -155,6 +175,7 @@ const isStreaming = ref(false)
 const messageListRef = ref<HTMLElement>()
 const currentAnswer = ref('')
 const lastAnswer = ref('')
+const chatMode = ref<ChatMode>('KNOWLEDGE')
 
 // 加载历史会话
 const loadSessions = async () => {
@@ -228,7 +249,8 @@ const handleSend = async () => {
     '/api/rag/chat/stream',
     {
       question: q,
-      sessionId: currentSessionId.value || undefined
+      sessionId: currentSessionId.value || undefined,
+      chatMode: chatMode.value
     },
     (text) => {
       fullAnswer += text
@@ -530,6 +552,17 @@ onMounted(() => {
   padding: 16px 20px;
   border-top: 1px solid #eee;
   background: #fafafa;
+}
+
+.mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.mode-tip {
+  margin-left: 4px;
 }
 
 .input-actions {

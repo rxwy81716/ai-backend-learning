@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.MethodParameter;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageConverter;
 import org.springframework.http.server.ServerHttpRequest;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseBodyAdvice;
 
 import jakarta.servlet.http.HttpServletResponse;
+import reactor.core.publisher.Flux;
 
 import java.util.Map;
 
@@ -36,11 +38,21 @@ public class ResponseAdvice implements ResponseBodyAdvice<Object> {
     private static final String[] IGNORE_PATHS = {
             "/swagger-ui",
             "/v3/api-docs",
-            "/favicon.ico"
+            "/favicon.ico",
+            "/stream"          // SSE 流式接口
     };
+
+    /**
+     * 需要忽略统一包装的 Content-Type
+     */
+    private static final MediaType STREAM_MEDIA_TYPE = MediaType.TEXT_EVENT_STREAM;
 
     @Override
     public boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
+        // 排除 Flux 流式返回类型（SSE 接口）
+        if (Flux.class.isAssignableFrom(returnType.getParameterType())) {
+            return false;
+        }
         return true;
     }
 
@@ -58,6 +70,11 @@ public class ResponseAdvice implements ResponseBodyAdvice<Object> {
             if (path.contains(ignorePath)) {
                 return body;
             }
+        }
+
+        // 忽略 SSE 流式响应（Content-Type 为 text/event-stream）
+        if (selectedContentType != null && STREAM_MEDIA_TYPE.includes(selectedContentType)) {
+            return body;
         }
 
         // 如果已经是 R 类型，直接返回

@@ -41,18 +41,22 @@ export interface LoginResponse {
 }
 
 // 文档相关
+export type TaskStatus = 'UPLOADED' | 'PARSING' | 'IMPORTING' | 'DONE' | 'FAILED'
+export type DocScope = 'PUBLIC' | 'PRIVATE'
+
 export interface DocumentTask {
   taskId: string
   fileName: string
   filePath: string
   fileSize: number
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED'
-  scope: 'PUBLIC' | 'PRIVATE'
+  status: TaskStatus
+  docScope: DocScope
   userId?: string
-  errorMessage?: string
+  totalChunks: number
+  importedChunks: number
+  errorMsg?: string
   createdAt: string
-  updatedAt: string
-  chunksIndexed?: number
+  finishedAt?: string
 }
 
 export interface DocumentUploadResponse {
@@ -68,6 +72,8 @@ export interface DocumentTaskLog {
 }
 
 // RAG问答相关
+export type ChatMode = 'KNOWLEDGE' | 'LLM'
+
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
   content: string
@@ -78,6 +84,7 @@ export interface ChatRequest {
   question: string
   sessionId?: string
   promptName?: string
+  chatMode?: ChatMode
 }
 
 export interface ChatResponse {
