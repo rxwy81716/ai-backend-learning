@@ -102,6 +102,56 @@ public class DocumentController {
     }
 
     /**
+     * 爬虫专用上传接口（无需认证，固定 PUBLIC）
+     *
+     * 供 local-ai-crawler 模块直接调用，无需 JWT Token。
+     * docScope 固定为 PUBLIC，userId 设为 "crawler-bot"。
+     */
+    @PostMapping("/crawler-upload")
+    public Map<String, Object> crawlerUpload(@RequestParam("file") MultipartFile file) {
+        if (file.isEmpty()) {
+            throw new IllegalArgumentException("文件不能为空");
+        }
+        if (file.getSize() > MAX_FILE_SIZE) {
+            throw new IllegalArgumentException("文件大小不能超过50MB");
+        }
+
+        String originalName = file.getOriginalFilename();
+        String taskId = UUID.randomUUID().toString().replace("-", "");
+
+        try {
+            Path dirPath = Paths.get(uploadDir);
+            if (!Files.exists(dirPath)) {
+                Files.createDirectories(dirPath);
+            }
+
+            String savedName = taskId + "_" + originalName;
+            Path filePath = dirPath.resolve(savedName);
+            try (var inputStream = file.getInputStream()) {
+                Files.copy(inputStream, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            log.info("[爬虫上传] 文件已保存: {} ({}字节)", filePath, file.getSize());
+
+            DocumentTask task = documentParseService.registerTask(
+                    taskId, originalName, filePath.toString(), file.getSize(), "crawler-bot", "PUBLIC");
+
+            documentParseService.submitToQueue(taskId);
+
+            return Map.of(
+                    "taskId", taskId,
+                    "fileName", originalName,
+                    "fileSize", file.getSize(),
+                    "status", task.getStatus(),
+                    "docScope", "PUBLIC"
+            );
+        } catch (IOException e) {
+            log.error("[爬虫上传] 文件保存失败: {}", e.getMessage(), e);
+            throw new IllegalStateException("文件保存失败: " + e.getMessage());
+        }
+    }
+
+    /**
      * 查询单个任务状态
      */
     @GetMapping("/status/{taskId}")

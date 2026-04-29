@@ -125,16 +125,16 @@
     未来条件满足时可启用（服务器升级 / 需要云部署演示）
 ```
 
-## Step 7：爬虫数据采集（对应 Day33-38，新模块 demo-crawler）
+## Step 7：爬虫数据采集（对应 Day33-38，模块 local-ai-crawler）✅ 已完成
 
 ```
-□ 新建 demo-crawler 模块（独立于 local-ai-knowledge）
-□ GitHub Trending + 微博热搜（Jsoup 静态页面入门）
-□ 知乎热榜 + B站热门（JSON API）
-□ 小红书 / 抖音（Playwright 动态页面，进阶）
-□ 清洗管道：去重(BloomFilter) → 清洗 → 向量化入库
-□ 定时调度（@Scheduled / XXL-Job）
-□ 爬取结果通过 API 调 local-ai-knowledge 入库
+✅ 新建 local-ai-crawler 模块（独立于 local-ai-knowledge）
+✅ GitHub Trending + 微博热搜（Jsoup 静态页面入门）
+✅ 知乎热榜 + B站热门（JSON API）
+✅ 小红书 / 抖音（Playwright 动态页面，进阶）
+✅ 清洗管道：去重(BloomFilter) → 清洗 → 向量化入库
+✅ 定时调度（@Scheduled / XXL-Job）
+✅ 爬取结果通过 API 调 local-ai-knowledge 入库
 ```
 
 ## Step 8：AI SQL 智能助手（对应 Day42-48，新模块 demo-ai-sql）
@@ -171,6 +171,6 @@
 | ~~P1~~ | ~~Step 4 JWT 认证~~ | ✅ 已完成（含 RBAC 权限体系） |
 | ~~P1~~ | ~~Step 5 前端对接~~ | ✅ 已完成（含管理后台 + 移动端适配） |
 | ~~P2~~ | ~~Step 6 Docker 部署~~ | ⏭️ 跳过（跨机器架构不适用，远期再议） |
-| P2 | Step 7 爬虫 | 独立模块，可并行 |
+| ~~P2~~ | ~~Step 7 爬虫~~ | ✅ 已完成（local-ai-crawler 模块） |
 | P3 | Step 8 AI SQL | 大特性，工作量大，可后做 |
 | P3 | Step 9 智能化 | 远期目标 |
