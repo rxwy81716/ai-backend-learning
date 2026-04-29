@@ -164,12 +164,17 @@ public class DocumentController {
     }
 
     /**
-     * 查询任务列表（公开文档 + 当前用户私有文档）
+     * 查询任务列表
+     * - 管理员：返回公开文档 + 所有私有文档
+     * - 普通用户：仅返回当前用户私有文档
      */
     @GetMapping("/tasks")
     public List<DocumentTask> tasks() {
+        if (SecurityUtil.isAdmin()) {
+            return documentParseService.getAllTasks();
+        }
         String userId = SecurityUtil.getCurrentUserIdStr();
-        return documentParseService.getAccessibleTasks(userId);
+        return documentParseService.getAllUserTasks(userId);
     }
 
     /**

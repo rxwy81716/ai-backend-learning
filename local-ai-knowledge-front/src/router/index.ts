@@ -19,6 +19,7 @@ const UserManage = () => import('@/views/admin/UserManage.vue')
 const RoleManage = () => import('@/views/admin/RoleManage.vue')
 const MenuManage = () => import('@/views/admin/MenuManage.vue')
 const AgentManage = () => import('@/views/admin/AgentManage.vue')
+const CrawlerManage = () => import('@/views/admin/CrawlerManage.vue')
 
 // 个人中心
 const UserProfile = () => import('@/views/profile/UserProfile.vue')
@@ -80,15 +81,23 @@ const privateRoutes: RouteRecordRaw[] = [
       },
       {
         path: 'hot',
-        name: 'HotDashboard',
-        component: HotDashboard,
-        meta: { title: '每日热榜', icon: 'TrendCharts' }
-      },
-      {
-        path: 'hot/history',
-        name: 'HotHistory',
-        component: HotHistory,
-        meta: { title: '历史热榜', icon: 'Clock' }
+        name: 'Hot',
+        redirect: '/hot/dashboard',
+        meta: { title: '每日热榜', icon: 'TrendCharts' },
+        children: [
+          {
+            path: 'dashboard',
+            name: 'HotDashboard',
+            component: HotDashboard,
+            meta: { title: '每日热榜', icon: 'TrendCharts' }
+          },
+          {
+            path: 'history',
+            name: 'HotHistory',
+            component: HotHistory,
+            meta: { title: '历史热榜', icon: 'Clock' }
+          }
+        ]
       },
       {
         path: 'profile',
@@ -125,6 +134,12 @@ const privateRoutes: RouteRecordRaw[] = [
             name: 'AgentManage',
             component: AgentManage,
             meta: { title: '智能体管理', requiredRoles: ['ROLE_ADMIN'] }
+          },
+          {
+            path: 'crawler',
+            name: 'CrawlerManage',
+            component: CrawlerManage,
+            meta: { title: '爬虫管理', requiredRoles: ['ROLE_ADMIN'] }
           }
         ]
       }

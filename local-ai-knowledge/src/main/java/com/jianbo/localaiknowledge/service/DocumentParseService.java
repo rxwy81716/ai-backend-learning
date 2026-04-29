@@ -102,6 +102,11 @@ public class DocumentParseService {
         return taskMapper.selectAccessibleTasks(userId);
     }
 
+    /** 获取所有任务（管理员用） */
+    public List<DocumentTask> getAllTasks() {
+        return taskMapper.selectAll();
+    }
+
     /** 获取文档分段（从 PG document_chunk 读取） */
     public List<DocumentChunk> getDocumentChunks(String taskId) {
         return chunkMapper.selectByTaskId(taskId);

@@ -8,8 +8,8 @@ import com.jianbo.crawler.model.HotItem;
 import com.jianbo.crawler.util.UserAgentUtil;
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.WaitUntilState;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -36,12 +36,17 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class XiaohongshuCrawler implements CrawlerStrategy {
 
     private static final String TARGET_URL = "https://www.xiaohongshu.com/explore";
 
+    private final Browser browser;
     private final CrawlerProperties props;
+
+    public XiaohongshuCrawler(@Lazy Browser browser, CrawlerProperties props) {
+        this.browser = browser;
+        this.props = props;
+    }
 
     @Override
     public CrawlSource getSource() {
@@ -53,17 +58,9 @@ public class XiaohongshuCrawler implements CrawlerStrategy {
         long start = System.currentTimeMillis();
         log.info("开始采集小红书热门（Playwright）...");
 
-        // Playwright 不是线程安全的，每次采集创建独立实例
-        try (Playwright pw = Playwright.create()) {
-            // 启动 Chromium 无头浏览器
-            Browser browser = pw.chromium().launch(
-                    new BrowserType.LaunchOptions()
-                            .setHeadless(props.playwright().headless())
-                            .setTimeout(props.playwright().timeout())
-            );
-
-            // 创建浏览器上下文（模拟桌面环境）
-            BrowserContext context = browser.newContext(
+        BrowserContext context = null;
+        try {
+            context = browser.newContext(
                     new Browser.NewContextOptions()
                             .setUserAgent(UserAgentUtil.randomDesktop())
                             .setViewportSize(1920, 1080)
@@ -72,38 +69,36 @@ public class XiaohongshuCrawler implements CrawlerStrategy {
 
             Page page = context.newPage();
 
-            try {
-                // 导航到小红书探索页
-                page.navigate(TARGET_URL, new Page.NavigateOptions()
-                        .setTimeout(props.playwright().timeout())
-                        .setWaitUntil(WaitUntilState.NETWORKIDLE));
+            // 导航到小红书探索页
+            page.navigate(TARGET_URL, new Page.NavigateOptions()
+                    .setTimeout(props.playwright().timeout())
+                    .setWaitUntil(WaitUntilState.NETWORKIDLE));
 
-                // 等待笔记卡片加载完成
-                page.waitForSelector(".note-item", new Page.WaitForSelectorOptions()
-                        .setTimeout(10_000));
+            // 等待笔记卡片加载完成
+            page.waitForSelector(".note-item", new Page.WaitForSelectorOptions()
+                    .setTimeout(10_000));
 
-                // 向下滚动以加载更多内容
-                for (int i = 0; i < 3; i++) {
-                    page.mouse().wheel(0, 800);
-                    page.waitForTimeout(1500);
-                }
-
-                // 使用 Locator API 提取笔记卡片（比 evaluate() 更稳定可维护）
-                List<HotItem> hotItems = extractNotesFromPage(page);
-
-                long cost = System.currentTimeMillis() - start;
-                log.info("小红书热门采集完成：{} 条, 耗时 {}ms", hotItems.size(), cost);
-                return CrawlResult.success(CrawlSource.XIAOHONGSHU, hotItems, cost);
-
-            } finally {
-                context.close();
-                browser.close();
+            // 向下滚动以加载更多内容
+            for (int i = 0; i < 3; i++) {
+                page.mouse().wheel(0, 800);
+                page.waitForTimeout(1500);
             }
+
+            // 使用 Locator API 提取笔记卡片
+            List<HotItem> hotItems = extractNotesFromPage(page);
+
+            long cost = System.currentTimeMillis() - start;
+            log.info("小红书热门采集完成：{} 条, 耗时 {}ms", hotItems.size(), cost);
+            return CrawlResult.success(CrawlSource.XIAOHONGSHU, hotItems, cost);
 
         } catch (Exception e) {
             long cost = System.currentTimeMillis() - start;
             log.error("小红书热门采集失败：{}", e.getMessage(), e);
             return CrawlResult.fail(CrawlSource.XIAOHONGSHU, e.getMessage(), cost);
+        } finally {
+            if (context != null) {
+                try { context.close(); } catch (Exception ignored) {}
+            }
         }
     }
 

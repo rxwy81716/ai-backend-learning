@@ -184,7 +184,7 @@ public class AdminController {
 
     @GetMapping("/menus")
     public List<SysMenu> getMenus() {
-        return menuMapper.findAll();
+        return menuService.listAllTree();
     }
 
     @PostMapping("/menus")

@@ -16,15 +16,14 @@
           </el-button>
         </div>
         <div class="history-list">
-          <!-- 当前对话（默认） -->
+          <!-- 新对话（仅当用户主动新建且未发消息时高亮） -->
           <div
-            class="history-item current-chat"
-            :class="{ active: !currentSessionId }"
-            @click="createNewSession"
+            v-if="!currentSessionId"
+            class="history-item current-chat active"
           >
             <el-icon><ChatLineSquare /></el-icon>
-            <span class="session-text">当前对话</span>
-            <el-tag v-if="!currentSessionId" size="small" type="primary">进行中</el-tag>
+            <span class="session-text">新对话</span>
+            <el-tag size="small" type="primary">编辑中</el-tag>
           </div>
 
           <!-- 历史会话列表 -->
@@ -46,7 +45,7 @@
               @click.stop="deleteSession(session.sessionId)"
             ><Delete /></el-icon>
           </div>
-          <el-empty v-if="sessions.length === 0" description="暂无历史会话" :image-size="60" />
+          <el-empty v-if="sessions.length === 0 && currentSessionId" description="暂无历史会话" :image-size="60" />
         </div>
       </div>
 
@@ -180,10 +179,6 @@
               <el-icon v-if="!isStreaming"><Promotion /></el-icon>
               {{ isStreaming ? '生成中...' : '发送' }}
             </el-button>
-            <el-button @click="copyAnswer" :disabled="!lastAnswer">
-              <el-icon><DocumentCopy /></el-icon>
-              复制答案
-            </el-button>
           </div>
         </div>
       </div>
@@ -260,9 +255,13 @@ const toggleHistory = () => {
 const isMobile = computed(() => window.innerWidth <= 768)
 
 // 加载历史会话
-const loadSessions = async () => {
+const loadSessions = async (autoSelect = false) => {
   try {
     sessions.value = await getSessions()
+    // 首次加载时自动选中最新会话
+    if (autoSelect && sessions.value.length > 0 && !currentSessionId.value) {
+      await selectSession(sessions.value[0].sessionId)
+    }
   } catch (error) {
     console.error('加载会话列表失败:', error)
   }
@@ -396,10 +395,15 @@ const handleSend = async () => {
     (error) => {
       ElMessage.error('请求失败: ' + error.message)
     },
-    () => {
+    async () => {
       isStreaming.value = false
       lastAnswer.value = fullAnswer
-      loadSessions() // 刷新会话列表
+      // 刷新会话列表；新对话首次发消息后自动绑定 sessionId
+      const wasNew = !currentSessionId.value
+      await loadSessions()
+      if (wasNew && sessions.value.length > 0) {
+        currentSessionId.value = sessions.value[0].sessionId
+      }
     }
   )
 }
@@ -444,7 +448,7 @@ const scrollToBottom = () => {
 }
 
 onMounted(() => {
-  loadSessions()
+  loadSessions(true)
 })
 </script>
 

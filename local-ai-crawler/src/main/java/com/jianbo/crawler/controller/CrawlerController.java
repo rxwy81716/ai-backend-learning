@@ -3,6 +3,7 @@ package com.jianbo.crawler.controller;
 import com.jianbo.crawler.crawler.CrawlerStrategy;
 import com.jianbo.crawler.model.CrawlResult;
 import com.jianbo.crawler.model.CrawlSource;
+import com.jianbo.crawler.repository.TaskLogRepository;
 import com.jianbo.crawler.service.BloomFilterService;
 import com.jianbo.crawler.service.CrawlPipelineService;
 import com.jianbo.crawler.service.CrawlPipelineService.PipelineResult;
@@ -36,6 +37,7 @@ public class CrawlerController {
     private final CrawlPipelineService pipelineService;
     private final List<CrawlerStrategy> crawlers;
     private final BloomFilterService bloomFilterService;
+    private final TaskLogRepository taskLogRepository;
 
     /**
      * 查看所有已注册的数据来源
@@ -60,7 +62,7 @@ public class CrawlerController {
     @PostMapping("/execute/{source}")
     public PipelineResult execute(@PathVariable String source) {
         CrawlSource crawlSource = CrawlSource.valueOf(source.toUpperCase());
-        return pipelineService.execute(crawlSource);
+        return pipelineService.execute(crawlSource, "MANUAL");
     }
 
     /**
@@ -68,7 +70,7 @@ public class CrawlerController {
      */
     @PostMapping("/execute-all")
     public List<PipelineResult> executeAll() {
-        return pipelineService.executeAll();
+        return pipelineService.executeAll("MANUAL");
     }
 
     /**
@@ -98,5 +100,35 @@ public class CrawlerController {
                 "crawlerCount", crawlers.size(),
                 "bloomFilterElementCount", bloomFilterService.approximateElementCount()
         );
+    }
+
+    // ==================== 任务日志查询 ====================
+
+    /**
+     * 查询最近任务执行日志
+     *
+     * @param limit 返回条数（默认50）
+     */
+    @GetMapping("/logs")
+    public List<Map<String, Object>> logs(@RequestParam(defaultValue = "50") int limit) {
+        return taskLogRepository.findRecent(limit);
+    }
+
+    /**
+     * 查询指定来源的最近任务日志
+     */
+    @GetMapping("/logs/{source}")
+    public List<Map<String, Object>> logsBySource(
+            @PathVariable String source,
+            @RequestParam(defaultValue = "30") int limit) {
+        return taskLogRepository.findRecentBySource(source.toUpperCase(), limit);
+    }
+
+    /**
+     * 今日各来源执行统计
+     */
+    @GetMapping("/logs/today-stats")
+    public List<Map<String, Object>> logsTodayStats() {
+        return taskLogRepository.todayStats();
     }
 }

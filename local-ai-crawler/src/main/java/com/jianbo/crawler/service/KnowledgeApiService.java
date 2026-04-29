@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 
 import java.nio.charset.StandardCharsets;
@@ -58,13 +61,16 @@ public class KnowledgeApiService {
                 }
             };
 
-            MultipartBodyBuilder builder = new MultipartBodyBuilder();
-            builder.part("file", fileResource, MediaType.TEXT_PLAIN);
+            HttpHeaders fileHeaders = new HttpHeaders();
+            fileHeaders.setContentType(MediaType.TEXT_PLAIN);
+
+            MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+            body.add("file", new HttpEntity<>(fileResource, fileHeaders));
 
             String response = knowledgeRestClient.post()
                     .uri("/api/doc/crawler-upload")
                     .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .body(builder.build())
+                    .body(body)
                     .retrieve()
                     .body(String.class);
 

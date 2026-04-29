@@ -56,10 +56,10 @@
     <!-- 数据表格 -->
     <div class="hot-list-card">
       <el-table :data="items" v-loading="loading" stripe max-height="600">
-        <el-table-column prop="rank" label="#" width="60" align="center">
-          <template #default="{ row }">
-            <span :class="['rank-badge', { 'rank-top': row.rank <= 3 }]">
-              {{ row.rank }}
+        <el-table-column type="index" label="#" width="60" align="center">
+          <template #default="{ $index }">
+            <span :class="['rank-badge', { 'rank-top': (currentPage - 1) * pageSize + $index < 3 }]">
+              {{ (currentPage - 1) * pageSize + $index + 1 }}
             </span>
           </template>
         </el-table-column>
@@ -98,6 +98,19 @@
       </el-table>
 
       <el-empty v-if="!loading && searched && items.length === 0" description="该日期暂无热榜数据" />
+
+      <!-- 分页 -->
+      <div class="pagination-wrap" v-if="pageTotal > 0">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[20, 50, 100]"
+          :total="pageTotal"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handlePageChange"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -108,7 +121,6 @@ import { ElMessage } from 'element-plus'
 import { Search, TopRight } from '@element-plus/icons-vue'
 import {
   getHotByDate,
-  getHotByDateAndSource,
   getStatsByDate,
   SOURCE_LABELS,
   SOURCE_TAG_TYPE
@@ -119,6 +131,9 @@ const loading = ref(false)
 const searched = ref(false)
 const items = ref<HotItem[]>([])
 const stats = ref<SourceStat[]>([])
+const pageTotal = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
 
 // 默认今天
 const today = new Date().toISOString().split('T')[0]
@@ -138,26 +153,48 @@ const disabledDate = (time: Date) => {
   return time.getTime() > Date.now()
 }
 
-// 查询
+const handlePageChange = (page: number) => {
+  currentPage.value = page
+  loadItems()
+}
+
+const handleSizeChange = (size: number) => {
+  pageSize.value = size
+  currentPage.value = 1
+  loadItems()
+}
+
+// 加载分页数据
+const loadItems = async () => {
+  loading.value = true
+  try {
+    const params: any = { page: currentPage.value, size: pageSize.value }
+    if (querySource.value) params.source = querySource.value
+    const res = await getHotByDate(queryDate.value, params)
+    items.value = res.items || []
+    pageTotal.value = res.total || 0
+  } catch (error: any) {
+    ElMessage.error(error.message || '查询失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 查询（重置页码 + 加载统计 + 分页数据）
 const handleSearch = async () => {
   if (!queryDate.value) {
     ElMessage.warning('请选择日期')
     return
   }
 
-  loading.value = true
   searched.value = true
+  currentPage.value = 1
 
+  loading.value = true
   try {
-    const [hotRes, statsRes] = await Promise.all([
-      querySource.value
-        ? getHotByDateAndSource(queryDate.value, querySource.value)
-        : getHotByDate(queryDate.value),
-      getStatsByDate(queryDate.value)
-    ])
-
-    items.value = hotRes.items || []
+    const statsRes = await getStatsByDate(queryDate.value)
     stats.value = statsRes.sources || []
+    await loadItems()
   } catch (error: any) {
     ElMessage.error(error.message || '查询失败')
   } finally {
@@ -261,6 +298,12 @@ const handleSearch = async () => {
 
 .text-muted {
   color: #c0c4cc;
+}
+
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 @media screen and (max-width: 768px) {

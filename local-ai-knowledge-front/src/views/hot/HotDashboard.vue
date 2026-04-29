@@ -49,11 +49,11 @@
 
     <!-- 热榜列表 -->
     <div class="hot-list-card">
-      <el-table :data="filteredItems" v-loading="loading" stripe>
-        <el-table-column prop="rank" label="#" width="60" align="center">
-          <template #default="{ row }">
-            <span :class="['rank-badge', { 'rank-top': row.rank <= 3 }]">
-              {{ row.rank }}
+      <el-table :data="pageItems" v-loading="loading" stripe>
+        <el-table-column type="index" label="#" width="60" align="center">
+          <template #default="{ $index }">
+            <span :class="['rank-badge', { 'rank-top': (currentPage - 1) * pageSize + $index < 3 }]">
+              {{ (currentPage - 1) * pageSize + $index + 1 }}
             </span>
           </template>
         </el-table-column>
@@ -64,13 +64,19 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="title" label="标题" min-width="300">
+        <el-table-column prop="title" label="标题" min-width="250">
           <template #default="{ row }">
             <a v-if="row.url" :href="row.url" target="_blank" class="hot-title-link">
               {{ row.title }}
               <el-icon class="link-icon"><TopRight /></el-icon>
             </a>
             <span v-else>{{ row.title }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="content" label="描述" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.content" class="content-text">{{ row.content }}</span>
+            <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="hot_score" label="热度" width="120">
@@ -88,9 +94,22 @@
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!loading && filteredItems.length === 0" description="今日暂无热榜数据">
+      <el-empty v-if="!loading && pageItems.length === 0" description="今日暂无热榜数据">
         <el-button type="primary" @click="refresh">刷新试试</el-button>
       </el-empty>
+
+      <!-- 分页 -->
+      <div class="pagination-wrap" v-if="pageTotal > 0">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[20, 50, 100]"
+          :total="pageTotal"
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleSizeChange"
+          @current-change="handlePageChange"
+        />
+      </div>
     </div>
 
     <!-- 趋势图 -->
@@ -116,24 +135,18 @@ import {
 import type { HotItem, SourceStat, TrendItem } from '@/api/hot'
 
 const loading = ref(false)
-const allItems = ref<HotItem[]>([])
+const pageItems = ref<HotItem[]>([])
+const pageTotal = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
 const statsCards = ref<SourceStat[]>([])
 const trendData = ref<TrendItem[]>([])
 const selectedSource = ref('')
 const trendChartRef = ref<HTMLElement>()
 let chartInstance: any = null
 
-// 可选来源列表
-const availableSources = computed(() => {
-  const sources = new Set(allItems.value.map(i => i.source))
-  return Array.from(sources)
-})
-
-// 筛选后的条目
-const filteredItems = computed(() => {
-  if (!selectedSource.value) return allItems.value
-  return allItems.value.filter(i => i.source === selectedSource.value)
-})
+// 可选来源列表（从统计数据中取）
+const availableSources = computed(() => statsCards.value.map(s => s.source))
 
 // 今日汇总
 const totalCount = computed(() =>
@@ -150,23 +163,50 @@ const formatTime = (ts: string) => {
 }
 
 const handleSourceChange = () => {
-  // 切换来源自动滚动到列表顶部
+  currentPage.value = 1
+  loadHotItems()
 }
 
-// 加载数据
+const handlePageChange = (page: number) => {
+  currentPage.value = page
+  loadHotItems()
+}
+
+const handleSizeChange = (size: number) => {
+  pageSize.value = size
+  currentPage.value = 1
+  loadHotItems()
+}
+
+// 加载热榜分页数据
+const loadHotItems = async () => {
+  loading.value = true
+  try {
+    const params: any = { page: currentPage.value, size: pageSize.value }
+    if (selectedSource.value) params.source = selectedSource.value
+    const res = await getTodayHot(params)
+    pageItems.value = res.items || []
+    pageTotal.value = res.total || 0
+  } catch (error: any) {
+    ElMessage.error(error.message || '加载热榜数据失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// 全量刷新（统计 + 分页 + 趋势）
 const refresh = async () => {
   loading.value = true
   try {
-    const [hotRes, statsRes, trendRes] = await Promise.all([
-      getTodayHot(),
+    const [statsRes, trendRes] = await Promise.all([
       getTodayStats(),
       getTrendStats(7)
     ])
-    allItems.value = hotRes.items || []
     statsCards.value = statsRes.sources || []
     trendData.value = trendRes.trend || []
 
-    // 渲染趋势图
+    await loadHotItems()
+
     await nextTick()
     renderTrendChart()
   } catch (error: any) {
@@ -364,8 +404,21 @@ onUnmounted(() => {
   color: #e6a23c;
 }
 
+.content-text {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.4;
+}
+
 .text-muted {
   color: #c0c4cc;
+}
+
+/* 分页 */
+.pagination-wrap {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 /* 趋势图 */

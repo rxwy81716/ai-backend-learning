@@ -2,23 +2,32 @@
   <div class="menu-manage-container">
     <div class="page-header">
       <h2>菜单权限管理</h2>
-      <p class="subtitle">配置系统菜单和角色权限</p>
+      <p class="subtitle">配置系统菜单结构和角色权限</p>
     </div>
 
     <el-row :gutter="20">
-      <!-- 左侧：菜单列表 -->
+      <!-- 左侧：菜单列表（树形表格） -->
       <el-col :span="12">
         <div class="menu-card">
           <div class="card-header">
             <h3>菜单列表</h3>
-            <el-button type="primary" size="small" @click="openCreateMenu">
-              <el-icon><Plus /></el-icon>
-              新增菜单
-            </el-button>
+            <div>
+              <el-button size="small" @click="openCreateMenu(0)">
+                <el-icon><Plus /></el-icon>
+                新增顶级菜单
+              </el-button>
+            </div>
           </div>
 
-          <el-table :data="menus" v-loading="loading" stripe row-key="id" :tree-props="{ children: 'children' }">
-            <el-table-column prop="name" label="菜单名称" min-width="120">
+          <el-table
+            :data="menus"
+            v-loading="loading"
+            stripe
+            row-key="id"
+            :tree-props="{ children: 'children' }"
+            default-expand-all
+          >
+            <el-table-column prop="name" label="菜单名称" min-width="140">
               <template #default="{ row }">
                 <span>{{ row.name }}</span>
               </template>
@@ -28,19 +37,18 @@
                 <code class="path-code">{{ row.path }}</code>
               </template>
             </el-table-column>
-            <el-table-column prop="icon" label="图标" width="80" align="center">
+            <el-table-column prop="icon" label="图标" width="70" align="center">
               <template #default="{ row }">
                 <el-icon v-if="row.icon"><component :is="row.icon" /></el-icon>
+                <span v-else class="text-muted">-</span>
               </template>
             </el-table-column>
-            <el-table-column prop="isVisible" label="显示" width="70" align="center">
+            <el-table-column prop="sortOrder" label="排序" width="60" align="center" />
+            <el-table-column label="操作" width="150" fixed="right">
               <template #default="{ row }">
-                <el-tag v-if="row.isVisible" type="success" size="small">是</el-tag>
-                <el-tag v-else type="info" size="small">否</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="120" fixed="right">
-              <template #default="{ row }">
+                <el-button link type="success" size="small" @click="openCreateMenu(row.id)" title="添加子菜单">
+                  <el-icon><Plus /></el-icon>
+                </el-button>
                 <el-button link type="primary" size="small" @click="openEditMenu(row)">
                   <el-icon><Edit /></el-icon>
                 </el-button>
@@ -53,7 +61,7 @@
         </div>
       </el-col>
 
-      <!-- 右侧：角色菜单配置 -->
+      <!-- 右侧：角色菜单配置（树形勾选） -->
       <el-col :span="12">
         <div class="role-permission-card">
           <div class="card-header">
@@ -61,7 +69,7 @@
           </div>
 
           <div class="role-select">
-            <el-select v-model="selectedRoleId" placeholder="选择角色" size="default" style="width: 200px">
+            <el-select v-model="selectedRoleId" placeholder="选择角色" style="width: 200px">
               <el-option
                 v-for="role in roles"
                 :key="role.id"
@@ -72,22 +80,28 @@
           </div>
 
           <div v-if="selectedRoleId" class="permission-tree">
-            <el-checkbox v-model="checkAll" @change="handleCheckAll" :indeterminate="isIndeterminate">
-              全选
-            </el-checkbox>
-            <el-divider />
-            <el-checkbox-group v-model="selectedMenuIds">
-              <el-checkbox
-                v-for="menu in menus"
-                :key="menu.id"
-                :label="menu.id"
-                :value="menu.id"
-                style="display: block; margin-left: 0; margin-bottom: 8px"
-              >
-                {{ menu.name }}
-                <code class="path-code-small">{{ menu.path }}</code>
-              </el-checkbox>
-            </el-checkbox-group>
+            <div class="perm-toolbar">
+              <el-button text size="small" @click="handlePermExpandAll(true)">展开全部</el-button>
+              <el-button text size="small" @click="handlePermExpandAll(false)">收起全部</el-button>
+              <el-divider direction="vertical" />
+              <el-button text size="small" @click="handlePermSelectAll">全选</el-button>
+              <el-button text size="small" @click="handlePermDeselectAll">清空</el-button>
+            </div>
+            <el-tree
+              ref="permTreeRef"
+              :data="menus"
+              :props="{ children: 'children', label: 'name' }"
+              show-checkbox
+              node-key="id"
+              default-expand-all
+            >
+              <template #default="{ data }">
+                <span class="tree-node-label">
+                  <span>{{ data.name }}</span>
+                  <code class="path-code-small">{{ data.path }}</code>
+                </span>
+              </template>
+            </el-tree>
           </div>
 
           <div v-if="selectedRoleId" class="permission-actions">
@@ -100,21 +114,34 @@
     </el-row>
 
     <!-- 创建/编辑菜单对话框 -->
-    <el-dialog v-model="menuDialogVisible" :title="isEditMenu ? '编辑菜单' : '新增菜单'" width="500px">
+    <el-dialog v-model="menuDialogVisible" :title="isEditMenu ? '编辑菜单' : '新增菜单'" width="520px">
       <el-form :model="menuForm" :rules="menuRules" ref="menuFormRef" label-width="100px">
+        <el-form-item label="父级菜单">
+          <el-tree-select
+            v-model="menuForm.parentId"
+            :data="parentMenuOptions"
+            :props="{ children: 'children', label: 'name', value: 'id' }"
+            placeholder="顶级菜单"
+            clearable
+            check-strictly
+            :render-after-expand="false"
+            default-expand-all
+            style="width: 100%"
+          />
+        </el-form-item>
         <el-form-item label="菜单名称" prop="name">
           <el-input v-model="menuForm.name" placeholder="如：智能问答" />
         </el-form-item>
         <el-form-item label="路由路径" prop="path">
           <el-input v-model="menuForm.path" placeholder="如：/rag" />
         </el-form-item>
-        <el-form-item label="组件路径" prop="component">
-          <el-input v-model="menuForm.component" placeholder="如：/views/rag/RagChat.vue" />
+        <el-form-item label="组件路径">
+          <el-input v-model="menuForm.component" placeholder="如：rag/RagChat（父菜单留空）" />
         </el-form-item>
-        <el-form-item label="图标" prop="icon">
+        <el-form-item label="图标">
           <el-input v-model="menuForm.icon" placeholder="Element Plus 图标名" />
         </el-form-item>
-        <el-form-item label="排序" prop="sortOrder">
+        <el-form-item label="排序">
           <el-input-number v-model="menuForm.sortOrder" :min="0" :max="999" />
         </el-form-item>
         <el-form-item label="显示">
@@ -130,7 +157,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Edit, Delete } from '@element-plus/icons-vue'
 import request from '@/utils/request'
@@ -158,15 +185,16 @@ const menus = ref<Menu[]>([])
 const roles = ref<Role[]>([])
 const loading = ref(false)
 const selectedRoleId = ref<number | null>(null)
-const selectedMenuIds = ref<number[]>([])
 const saving = ref(false)
 const menuDialogVisible = ref(false)
 const menuSaving = ref(false)
 const isEditMenu = ref(false)
 const menuFormRef = ref()
+const permTreeRef = ref<InstanceType<typeof import('element-plus')['ElTree']>>()
 
 const menuForm = reactive({
   id: 0,
+  parentId: 0 as number | null,
   name: '',
   path: '',
   component: '',
@@ -180,7 +208,13 @@ const menuRules = {
   path: [{ required: true, message: '请输入路由路径', trigger: 'blur' }]
 }
 
-// 加载菜单列表
+// 父级菜单下拉选项：顶级 + 树形
+const parentMenuOptions = computed(() => {
+  return [{ id: 0, name: '顶级菜单', children: menus.value }]
+})
+
+// ==================== 菜单 CRUD ====================
+
 const loadMenus = async () => {
   loading.value = true
   try {
@@ -192,69 +226,11 @@ const loadMenus = async () => {
   }
 }
 
-// 加载角色列表
-const loadRoles = async () => {
-  try {
-    roles.value = await request.get<any, Role[]>('/api/admin/roles')
-  } catch {
-    ElMessage.error('加载角色失败')
-  }
-}
-
-// 加载角色菜单权限
-const loadRoleMenus = async (roleId: number) => {
-  try {
-    const data = await request.get<any, any>(`/api/admin/roles/${roleId}/menus`)
-    selectedMenuIds.value = data.menuIds || []
-  } catch {
-    ElMessage.error('加载角色菜单失败')
-  }
-}
-
-// 监听角色选择变化
-watch(selectedRoleId, (newVal) => {
-  if (newVal) {
-    loadRoleMenus(newVal)
-  } else {
-    selectedMenuIds.value = []
-  }
-})
-
-// 全选/取消全选
-const checkAll = computed({
-  get: () => selectedMenuIds.value.length === menus.value.length && menus.value.length > 0,
-  set: () => {}
-})
-
-const isIndeterminate = computed(() => {
-  return selectedMenuIds.value.length > 0 && selectedMenuIds.value.length < menus.value.length
-})
-
-const handleCheckAll = (val: boolean) => {
-  selectedMenuIds.value = val ? menus.value.map(m => m.id) : []
-}
-
-// 保存角色菜单权限
-const saveRoleMenus = async () => {
-  if (!selectedRoleId.value) return
-  saving.value = true
-  try {
-    await request.put(`/api/admin/roles/${selectedRoleId.value}/menus`, {
-      menuIds: selectedMenuIds.value
-    })
-    ElMessage.success('权限配置已保存')
-  } catch {
-    ElMessage.error('保存失败')
-  } finally {
-    saving.value = false
-  }
-}
-
-// 打开创建菜单对话框
-const openCreateMenu = () => {
+const openCreateMenu = (parentId: number) => {
   isEditMenu.value = false
   Object.assign(menuForm, {
     id: 0,
+    parentId: parentId || 0,
     name: '',
     path: '',
     component: '',
@@ -265,11 +241,11 @@ const openCreateMenu = () => {
   menuDialogVisible.value = true
 }
 
-// 打开编辑菜单对话框
 const openEditMenu = (menu: Menu) => {
   isEditMenu.value = true
   Object.assign(menuForm, {
     id: menu.id,
+    parentId: menu.parentId || 0,
     name: menu.name,
     path: menu.path,
     component: menu.component || '',
@@ -280,18 +256,18 @@ const openEditMenu = (menu: Menu) => {
   menuDialogVisible.value = true
 }
 
-// 保存菜单
 const saveMenu = async () => {
   if (!menuFormRef.value) return
-  await menuFormRef.value.validate(async (valid) => {
+  await menuFormRef.value.validate(async (valid: boolean) => {
     if (!valid) return
     menuSaving.value = true
     try {
+      const payload = { ...menuForm, parentId: menuForm.parentId || 0 }
       if (isEditMenu.value) {
-        await request.put(`/api/admin/menus/${menuForm.id}`, menuForm)
+        await request.put(`/api/admin/menus/${menuForm.id}`, payload)
         ElMessage.success('菜单已更新')
       } else {
-        await request.post('/api/admin/menus', menuForm)
+        await request.post('/api/admin/menus', payload)
         ElMessage.success('菜单已创建')
       }
       menuDialogVisible.value = false
@@ -304,10 +280,13 @@ const saveMenu = async () => {
   })
 }
 
-// 删除菜单
 const deleteMenu = async (menu: Menu) => {
   try {
-    await ElMessageBox.confirm(`确定删除菜单「${menu.name}」吗？`, '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(
+      `确定删除菜单「${menu.name}」吗？${menu.children?.length ? '（包含子菜单）' : ''}`,
+      '删除确认',
+      { type: 'warning' }
+    )
     await request.delete(`/api/admin/menus/${menu.id}`)
     ElMessage.success('菜单已删除')
     loadMenus()
@@ -315,6 +294,98 @@ const deleteMenu = async (menu: Menu) => {
     if (e !== 'cancel') {
       ElMessage.error(e.message || '删除失败')
     }
+  }
+}
+
+// ==================== 角色权限配置（树形） ====================
+
+const loadRoles = async () => {
+  try {
+    roles.value = await request.get<any, Role[]>('/api/admin/roles')
+  } catch {
+    ElMessage.error('加载角色失败')
+  }
+}
+
+/** 获取叶子节点 id（非 check-strictly 模式回显只设叶子，树会自动推算父节点状态） */
+const getLeafIds = (menuIds: number[], nodes: Menu[]): number[] => {
+  const parentIds = new Set<number>()
+  const walk = (list: Menu[]) => {
+    for (const n of list) {
+      if (n.children?.length) {
+        parentIds.add(n.id)
+        walk(n.children)
+      }
+    }
+  }
+  walk(nodes)
+  return menuIds.filter(id => !parentIds.has(id))
+}
+
+const loadRoleMenus = async (roleId: number) => {
+  try {
+    const data = await request.get<any, any>(`/api/admin/roles/${roleId}/menus`)
+    await nextTick()
+    // 只勾叶子节点，el-tree 会自动计算父节点的全选/半选状态
+    const leafIds = getLeafIds(data.menuIds || [], menus.value)
+    permTreeRef.value?.setCheckedKeys(leafIds)
+  } catch {
+    ElMessage.error('加载角色菜单失败')
+  }
+}
+
+watch(selectedRoleId, (newVal) => {
+  if (newVal) {
+    loadRoleMenus(newVal)
+  } else {
+    permTreeRef.value?.setCheckedKeys([])
+  }
+})
+
+/** 收集树中所有节点 id */
+const getAllNodeIds = (nodes: Menu[]): number[] => {
+  const ids: number[] = []
+  const walk = (list: Menu[]) => {
+    for (const n of list) {
+      ids.push(n.id)
+      if (n.children?.length) walk(n.children)
+    }
+  }
+  walk(nodes)
+  return ids
+}
+
+const handlePermExpandAll = (expand: boolean) => {
+  const tree = permTreeRef.value
+  if (!tree) return
+  for (const id of getAllNodeIds(menus.value)) {
+    const node = tree.getNode(id)
+    if (node) node.expanded = expand
+  }
+}
+
+const handlePermSelectAll = () => {
+  permTreeRef.value?.setCheckedKeys(getAllNodeIds(menus.value))
+}
+
+const handlePermDeselectAll = () => {
+  permTreeRef.value?.setCheckedKeys([])
+}
+
+const saveRoleMenus = async () => {
+  if (!selectedRoleId.value || !permTreeRef.value) return
+  saving.value = true
+  try {
+    // checked（全选节点） + halfChecked（半选父节点）都要保存
+    const checked = permTreeRef.value.getCheckedKeys() as number[]
+    const halfChecked = permTreeRef.value.getHalfCheckedKeys() as number[]
+    const menuIds = [...checked, ...halfChecked]
+    await request.put(`/api/admin/roles/${selectedRoleId.value}/menus`, { menuIds })
+    ElMessage.success('权限配置已保存')
+  } catch {
+    ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
   }
 }
 
@@ -376,12 +447,30 @@ onMounted(() => {
   color: #606266;
 }
 
+.text-muted {
+  color: #c0c4cc;
+}
+
 .role-select {
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 
 .permission-tree {
   min-height: 200px;
+}
+
+.perm-toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.tree-node-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .path-code-small {
@@ -391,11 +480,14 @@ onMounted(() => {
   font-family: monospace;
   font-size: 11px;
   color: #909399;
-  margin-left: 8px;
 }
 
 .permission-actions {
   margin-top: 20px;
   text-align: center;
+}
+
+:deep(.el-tree-node__content) {
+  height: 32px;
 }
 </style>

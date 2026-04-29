@@ -74,20 +74,22 @@
             {{ formatDate(row.createdAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="80" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleViewLogs(row)">
-              <el-icon><View /></el-icon>
-              日志
-            </el-button>
-            <el-button link type="primary" size="small" @click="handleDownload(row)">
-              <el-icon><Download /></el-icon>
-              下载
-            </el-button>
-            <el-button link type="danger" size="small" @click="handleDelete(row)">
-              <el-icon><Delete /></el-icon>
-              删除
-            </el-button>
+            <el-dropdown trigger="click" @command="(cmd: string) => handleCommand(cmd, row)">
+              <el-button link type="primary" size="small">
+                <el-icon><More /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="logs" :icon="View">查看日志</el-dropdown-item>
+                  <el-dropdown-item command="download" :icon="Download">下载文档</el-dropdown-item>
+                  <el-dropdown-item command="delete" :icon="Delete" divided>
+                    <span style="color: var(--el-color-danger)">删除文档</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -185,7 +187,8 @@ import {
   Document,
   View,
   Download,
-  Delete
+  Delete,
+  More
 } from '@element-plus/icons-vue'
 
 const tasks = ref<DocumentTask[]>([])
@@ -291,6 +294,21 @@ const resetUploadForm = () => {
   selectedFile.value = null
   fileList.value = []
   uploadDocScope.value = 'PRIVATE'
+}
+
+// 操作菜单命令分发
+const handleCommand = (command: string, row: DocumentTask) => {
+  switch (command) {
+    case 'logs':
+      handleViewLogs(row)
+      break
+    case 'download':
+      handleDownload(row)
+      break
+    case 'delete':
+      handleDelete(row)
+      break
+  }
 }
 
 // 下载文档

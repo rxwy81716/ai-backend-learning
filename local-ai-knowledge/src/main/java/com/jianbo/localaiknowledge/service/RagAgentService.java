@@ -45,6 +45,7 @@ public class RagAgentService {
 
     private final EsVectorSearchService searchService;
     private final WebSearchService webSearchService;
+    private final HotSearchService hotSearchService;
     private final ChatHistoryCacheService chatHistoryCache;
     private final SystemPromptService systemPromptService;
     private final ChatContextUtil chatContextUtil;
@@ -61,6 +62,14 @@ public class RagAgentService {
     private static final int LLM_TIMEOUT_SECONDS = 30;
     /** LLM 调用最大重试次数 */
     private static final int LLM_MAX_RETRIES = 2;
+
+    /** 热榜 Agent Prompt */
+    private static final String HOT_SEARCH_PROMPT =
+            "你是一个热榜资讯助手。请根据以下实时热榜数据回答用户的问题。\n" +
+            "数据来自爬虫定时采集，请直接引用数据中的内容来回答。\n" +
+            "如果用户问特定平台的热榜，只展示对应平台的数据。\n" +
+            "请用简洁清晰的格式展示，标注排名和热度。\n\n" +
+            "【热榜数据】\n{context}";
 
     /** LLM 直答 Prompt（知识库未命中时使用，允许模型用自身知识回答） */
     private static final String LLM_DIRECT_PROMPT =
@@ -92,6 +101,12 @@ public class RagAgentService {
             source = "llm_direct";
             filledPrompt = LLM_DIRECT_PROMPT;
             log.info("用户选择 LLM 直答模式 | question={}", question);
+        } else if (hotSearchService.isHotQuery(question)) {
+            // ===== 热榜 Agent：检测到热搜相关问题，直接查 hot_items 表 =====
+            source = "hot_search";
+            String hotContext = hotSearchService.queryAndFormat(question);
+            filledPrompt = HOT_SEARCH_PROMPT.replace("{context}", hotContext);
+            log.info("Agent 路由 → 热榜查询 | question={}", question);
         } else {
             // ===== 知识库模式（默认）：检索私有+公有知识库 =====
             docs = (userId != null && !userId.isBlank())
@@ -199,6 +214,12 @@ public class RagAgentService {
             source = "llm_direct";
             filledPrompt = LLM_DIRECT_PROMPT;
             log.info("用户选择 LLM 直答模式（流式） | question={}", question);
+        } else if (hotSearchService.isHotQuery(question)) {
+            // ===== 热榜 Agent =====
+            source = "hot_search";
+            String hotContext = hotSearchService.queryAndFormat(question);
+            filledPrompt = HOT_SEARCH_PROMPT.replace("{context}", hotContext);
+            log.info("Agent 路由 → 热榜查询（流式） | question={}", question);
         } else {
             // ===== 知识库模式（默认） =====
             docs = (userId != null && !userId.isBlank())

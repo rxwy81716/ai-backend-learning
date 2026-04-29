@@ -39,64 +39,60 @@ public class HotItemController {
     // ==================== 热榜数据查询 ====================
 
     /**
-     * 今日全部热榜数据
+     * 今日热榜数据（分页 + 来源筛选）
+     *
+     * @param source 来源名称（可选，如 GITHUB_TRENDING、WEIBO_HOT）
+     * @param page   页码（从1开始，默认1）
+     * @param size   每页条数（默认20）
      */
     @GetMapping("/today")
-    public Map<String, Object> today() {
+    public Map<String, Object> today(
+            @RequestParam(required = false) String source,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
         LocalDate today = LocalDate.now();
-        List<Map<String, Object>> items = hotItemMapper.findByDate(today);
+        String src = (source != null && !source.isBlank()) ? source.toUpperCase() : null;
+        int offset = (Math.max(page, 1) - 1) * size;
+
+        int total = hotItemMapper.countByDate(today, src);
+        List<Map<String, Object>> items = hotItemMapper.findByDatePaged(today, src, offset, size);
+
         return Map.of(
                 "date", today.toString(),
-                "total", items.size(),
+                "total", total,
+                "page", page,
+                "size", size,
+                "pages", (total + size - 1) / size,
                 "items", items
         );
     }
 
     /**
-     * 今日指定来源的热榜数据
+     * 指定日期热榜数据（分页 + 来源筛选）
      *
-     * @param source 来源名称（如 GITHUB_TRENDING、WEIBO_HOT 等）
-     */
-    @GetMapping("/today/{source}")
-    public Map<String, Object> todayBySource(@PathVariable String source) {
-        LocalDate today = LocalDate.now();
-        List<Map<String, Object>> items = hotItemMapper.findByDateAndSource(today, source.toUpperCase());
-        return Map.of(
-                "date", today.toString(),
-                "source", source.toUpperCase(),
-                "total", items.size(),
-                "items", items
-        );
-    }
-
-    /**
-     * 指定日期全部热榜数据
-     *
-     * @param date 日期，格式 yyyy-MM-dd
+     * @param date   日期，格式 yyyy-MM-dd
+     * @param source 来源名称（可选）
+     * @param page   页码（从1开始，默认1）
+     * @param size   每页条数（默认20）
      */
     @GetMapping("/date/{date}")
     public Map<String, Object> byDate(
-            @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
-        List<Map<String, Object>> items = hotItemMapper.findByDate(date);
-        return Map.of(
-                "date", date.toString(),
-                "total", items.size(),
-                "items", items
-        );
-    }
-
-    /**
-     * 指定日期 + 来源的热榜数据
-     */
-    @GetMapping("/date/{date}/{source}")
-    public Map<String, Object> byDateAndSource(
             @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
-            @PathVariable String source) {
-        List<Map<String, Object>> items = hotItemMapper.findByDateAndSource(date, source.toUpperCase());
+            @RequestParam(required = false) String source,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        String src = (source != null && !source.isBlank()) ? source.toUpperCase() : null;
+        int offset = (Math.max(page, 1) - 1) * size;
+
+        int total = hotItemMapper.countByDate(date, src);
+        List<Map<String, Object>> items = hotItemMapper.findByDatePaged(date, src, offset, size);
+
         return Map.of(
                 "date", date.toString(),
-                "source", source.toUpperCase(),
-                "total", items.size(),
+                "total", total,
+                "page", page,
+                "size", size,
+                "pages", (total + size - 1) / size,
                 "items", items
         );
     }

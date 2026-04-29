@@ -9,7 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 菜单服务
@@ -89,5 +90,41 @@ public class MenuService {
             menuMapper.insertRoleMenus(roleId, menuIds);
         }
         log.info("更新角色菜单 | roleId={}, menuIds={}", roleId, menuIds);
+    }
+
+    /**
+     * 获取所有菜单（树形结构）
+     */
+    public List<SysMenu> listAllTree() {
+        return buildMenuTree(menuMapper.findAll());
+    }
+
+    /**
+     * 将扁平菜单列表构建为树形结构
+     */
+    public List<SysMenu> buildMenuTree(List<SysMenu> flatMenus) {
+        if (flatMenus == null || flatMenus.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, List<SysMenu>> childrenMap = flatMenus.stream()
+                .filter(m -> m.getParentId() != null && m.getParentId() != 0)
+                .collect(Collectors.groupingBy(SysMenu::getParentId));
+
+        return flatMenus.stream()
+                .filter(m -> m.getParentId() == null || m.getParentId() == 0L)
+                .peek(root -> buildChildren(root, childrenMap))
+                .sorted(Comparator.comparing(m -> m.getSortOrder() != null ? m.getSortOrder() : 99))
+                .collect(Collectors.toList());
+    }
+
+    private void buildChildren(SysMenu parent, Map<Long, List<SysMenu>> childrenMap) {
+        List<SysMenu> children = childrenMap.get(parent.getId());
+        if (children != null && !children.isEmpty()) {
+            parent.setChildren(children.stream()
+                    .peek(child -> buildChildren(child, childrenMap))
+                    .sorted(Comparator.comparing(m -> m.getSortOrder() != null ? m.getSortOrder() : 99))
+                    .collect(Collectors.toList()));
+        }
     }
 }

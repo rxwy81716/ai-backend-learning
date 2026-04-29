@@ -38,6 +38,9 @@ public interface DocumentTaskMapper {
     @Select("SELECT * FROM document_task WHERE doc_scope = 'PUBLIC' OR user_id = #{userId} ORDER BY created_at DESC")
     List<DocumentTask> selectAccessibleTasks(@Param("userId") String userId);
 
+    @Select("SELECT * FROM document_task ORDER BY created_at DESC")
+    List<DocumentTask> selectAll();
+
     @Delete("DELETE FROM document_task WHERE task_id = #{taskId}")
     int deleteByTaskId(@Param("taskId") String taskId);
 }

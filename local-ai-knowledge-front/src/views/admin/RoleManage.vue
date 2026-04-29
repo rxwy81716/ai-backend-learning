@@ -2,7 +2,7 @@
   <div class="role-manage-container">
     <div class="page-header">
       <h2>角色权限管理</h2>
-      <p class="subtitle">管理系统角色，配置角色权限</p>
+      <p class="subtitle">管理系统角色，配置角色菜单权限</p>
     </div>
 
     <div class="role-list-card">
@@ -39,8 +39,12 @@
             {{ formatDate(row.createdAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
+            <el-button link type="warning" size="small" @click="openPermDialog(row)">
+              <el-icon><Grid /></el-icon>
+              权限
+            </el-button>
             <el-button link type="primary" size="small" @click="openEditDialog(row)">
               <el-icon><Edit /></el-icon>
               编辑
@@ -92,14 +96,56 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <!-- 权限配置对话框 -->
+    <el-dialog
+      v-model="permDialogVisible"
+      :title="`配置权限 - ${permRole?.name || ''}`"
+      width="480px"
+      @closed="permRole = null"
+    >
+      <div class="perm-tree-wrapper" v-loading="permLoading">
+        <div class="perm-toolbar">
+          <el-button text size="small" @click="handleExpandAll(true)">展开全部</el-button>
+          <el-button text size="small" @click="handleExpandAll(false)">收起全部</el-button>
+          <el-divider direction="vertical" />
+          <el-button text size="small" @click="handleSelectAll">全选</el-button>
+          <el-button text size="small" @click="handleDeselectAll">清空</el-button>
+        </div>
+        <el-tree
+          ref="treeRef"
+          :data="menuTree"
+          :props="treeProps"
+          show-checkbox
+          node-key="id"
+          default-expand-all
+          highlight-current
+        >
+          <template #default="{ node, data }">
+            <span class="tree-node-label">
+              <span>{{ data.name }}</span>
+              <el-tag v-if="data.children && data.children.length" size="small" type="info" effect="plain" class="child-count">
+                {{ data.children.length }}
+              </el-tag>
+            </span>
+          </template>
+        </el-tree>
+      </div>
+      <template #footer>
+        <el-button @click="permDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="permSaving" @click="handleSavePerm">
+          保存权限
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
-import { Plus, Edit, Delete } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, Grid } from '@element-plus/icons-vue'
 import request from '@/utils/request'
 
 interface Role {
@@ -109,6 +155,15 @@ interface Role {
   description?: string
   userCount?: number
   createdAt: string
+}
+
+interface MenuNode {
+  id: number
+  parentId: number
+  name: string
+  path: string
+  icon?: string
+  children?: MenuNode[]
 }
 
 const roles = ref<Role[]>([])
@@ -129,6 +184,115 @@ const rules: FormRules = {
   name: [{ required: true, message: '请输入角色名称', trigger: 'blur' }],
   code: [{ required: true, message: '请输入角色编码', trigger: 'blur' }]
 }
+
+// ==================== 权限配置 ====================
+
+const permDialogVisible = ref(false)
+const permLoading = ref(false)
+const permSaving = ref(false)
+const permRole = ref<Role | null>(null)
+const menuTree = ref<MenuNode[]>([])
+const treeRef = ref<InstanceType<typeof import('element-plus')['ElTree']>>()
+
+const treeProps = {
+  children: 'children',
+  label: 'name'
+}
+
+/** 收集树中所有节点 id（扁平化） */
+const getAllNodeIds = (nodes: MenuNode[]): number[] => {
+  const ids: number[] = []
+  const walk = (list: MenuNode[]) => {
+    for (const n of list) {
+      ids.push(n.id)
+      if (n.children?.length) walk(n.children)
+    }
+  }
+  walk(nodes)
+  return ids
+}
+
+/** 获取叶子节点 id（回显时只设叶子，树自动推算父节点全选/半选状态） */
+const getLeafIds = (menuIds: number[], nodes: MenuNode[]): number[] => {
+  const parentIds = new Set<number>()
+  const walk = (list: MenuNode[]) => {
+    for (const n of list) {
+      if (n.children?.length) {
+        parentIds.add(n.id)
+        walk(n.children)
+      }
+    }
+  }
+  walk(nodes)
+  return menuIds.filter(id => !parentIds.has(id))
+}
+
+/** 打开权限配置弹窗 */
+const openPermDialog = async (role: Role) => {
+  permRole.value = role
+  permDialogVisible.value = true
+  permLoading.value = true
+
+  try {
+    const [treeData, permData] = await Promise.all([
+      request.get<any, MenuNode[]>('/api/admin/menus'),
+      request.get<any, { role: Role; menus: MenuNode[]; menuIds: number[] }>(`/api/admin/roles/${role.id}/menus`)
+    ])
+    menuTree.value = treeData
+
+    await nextTick()
+    // 只勾叶子节点，el-tree 自动计算父节点状态
+    const leafIds = getLeafIds(permData.menuIds, treeData)
+    treeRef.value?.setCheckedKeys(leafIds)
+  } catch (e: any) {
+    ElMessage.error('加载权限数据失败：' + (e.message || ''))
+  } finally {
+    permLoading.value = false
+  }
+}
+
+/** 保存权限：checked（全选）+ halfChecked（半选父节点）都保存 */
+const handleSavePerm = async () => {
+  if (!permRole.value || !treeRef.value) return
+
+  permSaving.value = true
+  try {
+    const checked = treeRef.value.getCheckedKeys() as number[]
+    const halfChecked = treeRef.value.getHalfCheckedKeys() as number[]
+    const menuIds = [...checked, ...halfChecked]
+    await request.put(`/api/admin/roles/${permRole.value.id}/menus`, { menuIds })
+    ElMessage.success('权限保存成功')
+    permDialogVisible.value = false
+  } catch (e: any) {
+    ElMessage.error('保存失败：' + (e.message || ''))
+  } finally {
+    permSaving.value = false
+  }
+}
+
+/** 展开/收起全部 */
+const handleExpandAll = (expand: boolean) => {
+  const tree = treeRef.value
+  if (!tree) return
+  const allIds = getAllNodeIds(menuTree.value)
+  for (const id of allIds) {
+    const node = tree.getNode(id)
+    if (node) node.expanded = expand
+  }
+}
+
+/** 全选 */
+const handleSelectAll = () => {
+  const allIds = getAllNodeIds(menuTree.value)
+  treeRef.value?.setCheckedKeys(allIds)
+}
+
+/** 清空 */
+const handleDeselectAll = () => {
+  treeRef.value?.setCheckedKeys([])
+}
+
+// ==================== 角色 CRUD ====================
 
 // 获取角色标签类型
 const getRoleTagType = (code: string) => {
@@ -278,5 +442,38 @@ code {
   border-radius: 4px;
   font-family: monospace;
   font-size: 13px;
+}
+
+/* 权限树样式 */
+.perm-tree-wrapper {
+  min-height: 200px;
+}
+
+.perm-toolbar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.tree-node-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.child-count {
+  font-size: 11px;
+  height: 18px;
+  line-height: 16px;
+}
+
+:deep(.el-tree-node__content) {
+  height: 34px;
+}
+
+:deep(.el-tree-node__expand-icon) {
+  font-size: 14px;
 }
 </style>

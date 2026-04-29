@@ -1,0 +1,150 @@
+════════════════════════════════════════
+GitHub Trending 热榜数据
+采集时间：2026-04-29 14:20
+数据分类：技术趋势
+共 13 条
+════════════════════════════════════════
+
+【GitHub Trending #1】
+标题：mattpocock/skills
+摘要：Skills for Real Engineers. Straight from my .claude directory.
+链接：https://github.com/mattpocock/skills
+热度：7,321 stars today
+语言：Shell
+总Star：39,187
+总Fork：3,081
+今日新增：7,321 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #2】
+标题：abhigyanpatwari/GitNexus
+摘要：GitNexus: The Zero-Server Code Intelligence Engine - GitNexus is a client-side knowledge graph creator that runs entirely in your browser. Drop in a GitHub repo or ZIP file, and get an interactive knowledge graph wit a built in Graph RAG Agent. Perfect for code exploration
+链接：https://github.com/abhigyanpatwari/GitNexus
+热度：1,607 stars today
+语言：TypeScript
+总Star：32,824
+总Fork：3,723
+今日新增：1,607 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #3】
+标题：ComposioHQ/awesome-codex-skills
+摘要：A curated list of practical Codex skills for automating workflows across the Codex CLI and API.
+链接：https://github.com/ComposioHQ/awesome-codex-skills
+热度：953 stars today
+语言：Python
+总Star：4,259
+总Fork：270
+今日新增：953 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #4】
+标题：microsoft/VibeVoice
+摘要：Open-Source Frontier Voice AI
+链接：https://github.com/microsoft/VibeVoice
+热度：1,483 stars today
+语言：Python
+总Star：45,117
+总Fork：5,001
+今日新增：1,483 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #5】
+标题：davila7/claude-code-templates
+摘要：CLI tool for configuring and monitoring Claude Code
+链接：https://github.com/davila7/claude-code-templates
+热度：346 stars today
+语言：Python
+总Star：26,278
+总Fork：2,619
+今日新增：346 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #6】
+标题：HunxByts/GhostTrack
+摘要：Useful tool to track location or mobile number
+链接：https://github.com/HunxByts/GhostTrack
+热度：967 stars today
+语言：Python
+总Star：10,871
+总Fork：1,514
+今日新增：967 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #7】
+标题：fspecii/ace-step-ui
+摘要：The Ultimate Open Source Suno Alternative - Professional UI for ACE-Step 1.5 AI Music Generation. Free, local, unlimited. Stop paying for Suno!
+链接：https://github.com/fspecii/ace-step-ui
+热度：162 stars today
+语言：JavaScript
+总Star：1,888
+总Fork：273
+今日新增：162 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #8】
+标题：public-apis/public-apis
+摘要：A collective list of free APIs
+链接：https://github.com/public-apis/public-apis
+热度：644 stars today
+语言：Python
+总Star：428,478
+总Fork：46,777
+今日新增：644 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #9】
+标题：CJackHwang/ds2api
+摘要：Deepseek to API: A lightweight, high-performance full-stack middleware converting client protocols to universal APIs. Supports multi-account rotation, compiled binaries, Vercel Serverless, and Docker. Compatible with Google, Claude, and OpenAI API formats.
+链接：https://github.com/CJackHwang/ds2api
+热度：417 stars today
+语言：Go
+总Star：2,460
+总Fork：669
+今日新增：417 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #10】
+标题：Alishahryar1/free-claude-code
+摘要：Use claude-code for free in the terminal, VSCode extension or discord like openclaw
+链接：https://github.com/Alishahryar1/free-claude-code
+热度：1,741 stars today
+语言：Python
+总Star：17,778
+总Fork：2,497
+今日新增：1,741 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #11】
+标题：donnemartin/system-design-primer
+摘要：Learn how to design large-scale systems. Prep for the system design interview. Includes Anki flashcards.
+链接：https://github.com/donnemartin/system-design-primer
+热度：744 stars today
+语言：Python
+总Star：346,009
+总Fork：55,842
+今日新增：744 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #12】
+标题：EbookFoundation/free-programming-books
+摘要：Freely available programming books
+链接：https://github.com/EbookFoundation/free-programming-books
+热度：147 stars today
+语言：Python
+总Star：386,789
+总Fork：66,165
+今日新增：147 stars today
+采集时间：2026-04-29 14:20
+
+【GitHub Trending #13】
+标题：iamgio/quarkdown
+摘要：Markdown with superpowers: from ideas to papers, presentations, websites, books, and knowledge bases.
+链接：https://github.com/iamgio/quarkdown
+热度：699 stars today
+语言：Kotlin
+总Star：12,286
+总Fork：324
+今日新增：699 stars today
+采集时间：2026-04-29 14:20
+

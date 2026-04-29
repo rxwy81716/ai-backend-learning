@@ -46,6 +46,8 @@ spring:
 app:
   upload:
     dir: ./uploads
+  crawler:
+    base-url: http://localhost:12117
   web-search:
     enabled: false                    # 启用网络搜索降级（需配置 api-key）
     api-key: ${TAVILY_API_KEY:}      # Tavily API Key（环境变量或直接填）

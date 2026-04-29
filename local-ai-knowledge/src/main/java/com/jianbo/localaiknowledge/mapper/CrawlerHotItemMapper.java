@@ -43,6 +43,37 @@ public interface CrawlerHotItemMapper {
     List<Map<String, Object>> findByDate(@Param("date") LocalDate date);
 
     /**
+     * 分页查询指定日期的热榜数据（可选来源筛选）
+     */
+    @Select("""
+        <script>
+        SELECT id, source, title, content, url, rank, hot_score,
+               metadata::text as metadata, crawl_time
+        FROM crawler_hot_item
+        WHERE crawl_date = #{date}
+        <if test="source != null and source != ''"> AND source = #{source}</if>
+        ORDER BY source, rank ASC
+        LIMIT #{limit} OFFSET #{offset}
+        </script>
+    """)
+    List<Map<String, Object>> findByDatePaged(@Param("date") LocalDate date,
+                                               @Param("source") String source,
+                                               @Param("offset") int offset,
+                                               @Param("limit") int limit);
+
+    /**
+     * 统计指定日期的热榜总条数（可选来源筛选）
+     */
+    @Select("""
+        <script>
+        SELECT COUNT(*) FROM crawler_hot_item
+        WHERE crawl_date = #{date}
+        <if test="source != null and source != ''"> AND source = #{source}</if>
+        </script>
+    """)
+    int countByDate(@Param("date") LocalDate date, @Param("source") String source);
+
+    /**
      * 统计指定日期各来源的条目数量
      */
     @Select("""

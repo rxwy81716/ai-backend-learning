@@ -39,7 +39,8 @@ public class ResponseAdvice implements ResponseBodyAdvice<Object> {
             "/swagger-ui",
             "/v3/api-docs",
             "/favicon.ico",
-            "/stream"          // SSE 流式接口
+            "/stream",         // SSE 流式接口
+            "/download"        // 文件下载接口
     };
 
     /**
@@ -51,6 +52,10 @@ public class ResponseAdvice implements ResponseBodyAdvice<Object> {
     public boolean supports(MethodParameter returnType, Class<? extends HttpMessageConverter<?>> converterType) {
         // 排除 Flux 流式返回类型（SSE 接口）
         if (Flux.class.isAssignableFrom(returnType.getParameterType())) {
+            return false;
+        }
+        // 排除文件下载类型（ResponseEntity<Resource>）
+        if (org.springframework.core.io.Resource.class.isAssignableFrom(returnType.getParameterType())) {
             return false;
         }
         return true;
@@ -79,6 +84,11 @@ public class ResponseAdvice implements ResponseBodyAdvice<Object> {
 
         // 如果已经是 R 类型，直接返回
         if (body instanceof R) {
+            return body;
+        }
+
+        // 文件下载（Resource）不包装
+        if (body instanceof org.springframework.core.io.Resource) {
             return body;
         }
 

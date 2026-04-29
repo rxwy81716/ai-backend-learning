@@ -2,24 +2,14 @@ import request from '@/utils/request'
 
 // ==================== 热榜数据查询 ====================
 
-// 今日全部热榜
-export function getTodayHot() {
-  return request.get<any, HotListResponse>('/api/hot/today')
+// 今日热榜（分页 + 来源筛选）
+export function getTodayHot(params?: { source?: string; page?: number; size?: number }) {
+  return request.get<any, HotPageResponse>('/api/hot/today', { params })
 }
 
-// 今日指定来源热榜
-export function getTodayHotBySource(source: string) {
-  return request.get<any, HotListResponse>(`/api/hot/today/${source}`)
-}
-
-// 指定日期全部热榜
-export function getHotByDate(date: string) {
-  return request.get<any, HotListResponse>(`/api/hot/date/${date}`)
-}
-
-// 指定日期+来源热榜
-export function getHotByDateAndSource(date: string, source: string) {
-  return request.get<any, HotListResponse>(`/api/hot/date/${date}/${source}`)
+// 指定日期热榜（分页 + 来源筛选）
+export function getHotByDate(date: string, params?: { source?: string; page?: number; size?: number }) {
+  return request.get<any, HotPageResponse>(`/api/hot/date/${date}`, { params })
 }
 
 // ==================== 统计分析 ====================
@@ -64,6 +54,15 @@ export interface HotListResponse {
   date: string
   source?: string
   total: number
+  items: HotItem[]
+}
+
+export interface HotPageResponse {
+  date: string
+  total: number
+  page: number
+  size: number
+  pages: number
   items: HotItem[]
 }
 
