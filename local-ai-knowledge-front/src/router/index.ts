@@ -23,6 +23,10 @@ const AgentManage = () => import('@/views/admin/AgentManage.vue')
 // 个人中心
 const UserProfile = () => import('@/views/profile/UserProfile.vue')
 
+// 每日热榜
+const HotDashboard = () => import('@/views/hot/HotDashboard.vue')
+const HotHistory = () => import('@/views/hot/HotHistory.vue')
+
 // 错误页面
 const NotFound = () => import('@/views/error/404.vue')
 const Forbidden = () => import('@/views/error/403.vue')
@@ -73,6 +77,18 @@ const privateRoutes: RouteRecordRaw[] = [
         name: 'DocumentManage',
         component: DocumentManage,
         meta: { title: '文档管理', icon: 'Document', requiredRoles: ['ROLE_USER', 'ROLE_ADMIN'] }
+      },
+      {
+        path: 'hot',
+        name: 'HotDashboard',
+        component: HotDashboard,
+        meta: { title: '每日热榜', icon: 'TrendCharts' }
+      },
+      {
+        path: 'hot/history',
+        name: 'HotHistory',
+        component: HotHistory,
+        meta: { title: '历史热榜', icon: 'Clock' }
       },
       {
         path: 'profile',
