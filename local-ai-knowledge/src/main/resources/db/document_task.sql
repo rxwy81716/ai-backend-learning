@@ -1,38 +1,40 @@
 -- 文档解析任务表（持久化任务状态 + 操作日志）
-CREATE TABLE IF NOT EXISTS document_task (
-    id            BIGSERIAL PRIMARY KEY,
-    task_id       VARCHAR(64)  NOT NULL UNIQUE,
-    file_name     VARCHAR(255) NOT NULL,
-    file_path     VARCHAR(500) NOT NULL,
-    file_size     BIGINT       NOT NULL DEFAULT 0,
-    status        VARCHAR(20)  NOT NULL DEFAULT 'UPLOADED',
-    total_chunks  INT          NOT NULL DEFAULT 0,
-    imported_chunks INT        NOT NULL DEFAULT 0,
-    error_msg     TEXT,
-    created_at    TIMESTAMP    NOT NULL DEFAULT NOW(),
-    finished_at   TIMESTAMP,
-    updated_at    TIMESTAMP    NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS document_task
+(
+    id              BIGSERIAL PRIMARY KEY,
+    task_id         VARCHAR(64)  NOT NULL UNIQUE,
+    file_name       VARCHAR(255) NOT NULL,
+    file_path       VARCHAR(500) NOT NULL,
+    file_size       BIGINT       NOT NULL DEFAULT 0,
+    status          VARCHAR(20)  NOT NULL DEFAULT 'UPLOADED',
+    total_chunks    INT          NOT NULL DEFAULT 0,
+    imported_chunks INT          NOT NULL DEFAULT 0,
+    error_msg       TEXT,
+    created_at      TIMESTAMP    NOT NULL DEFAULT NOW(),
+    finished_at     TIMESTAMP,
+    updated_at      TIMESTAMP    NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_doc_task_status ON document_task(status);
-CREATE INDEX IF NOT EXISTS idx_doc_task_created ON document_task(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_doc_task_status ON document_task (status);
+CREATE INDEX IF NOT EXISTS idx_doc_task_created ON document_task (created_at DESC);
 
-COMMENT ON TABLE  document_task IS '文档解析任务表';
+COMMENT ON TABLE document_task IS '文档解析任务表';
 COMMENT ON COLUMN document_task.task_id IS '任务ID（UUID）';
 COMMENT ON COLUMN document_task.status IS 'UPLOADED/PARSING/IMPORTING/DONE/FAILED';
 
 -- 文档操作日志表（记录每一步操作）
-CREATE TABLE IF NOT EXISTS document_task_log (
+CREATE TABLE IF NOT EXISTS document_task_log
+(
     id         BIGSERIAL PRIMARY KEY,
-    task_id    VARCHAR(64)  NOT NULL,
-    action     VARCHAR(50)  NOT NULL,
+    task_id    VARCHAR(64) NOT NULL,
+    action     VARCHAR(50) NOT NULL,
     detail     TEXT,
-    created_at TIMESTAMP    NOT NULL DEFAULT NOW()
+    created_at TIMESTAMP   NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_doc_log_task ON document_task_log(task_id);
+CREATE INDEX IF NOT EXISTS idx_doc_log_task ON document_task_log (task_id);
 
-COMMENT ON TABLE  document_task_log IS '文档任务操作日志';
+COMMENT ON TABLE document_task_log IS '文档任务操作日志';
 COMMENT ON COLUMN document_task_log.action IS '操作类型：UPLOAD/PARSE_START/PARSE_DONE/IMPORT_START/IMPORT_DONE/FAILED';
 
 

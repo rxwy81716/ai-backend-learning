@@ -28,20 +28,20 @@
     </scm>
     <properties>
         <java.version>21</java.version>
-        <spring-ai.version>1.0.0-M5</spring-ai.version>
+        <spring-ai.version>2.0.0-M4</spring-ai.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
     </properties>
-    <repositories>
-        <repository>
-            <id>spring-milestones</id>
-            <name>Spring Milestones</name>
-            <url>https://repo.spring.io/milestone</url>
-            <snapshots>
-                <enabled>false</enabled>
-            </snapshots>
-        </repository>
-    </repositories>
+    <!--    <repositories>-->
+    <!--        <repository>-->
+    <!--            <id>spring-milestones</id>-->
+    <!--            <name>Spring Milestones</name>-->
+    <!--            <url>https://repo.spring.io/milestone</url>-->
+    <!--            <snapshots>-->
+    <!--                <enabled>false</enabled>-->
+    <!--            </snapshots>-->
+    <!--        </repository>-->
+    <!--    </repositories>-->
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -53,17 +53,15 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-<!--        &lt;!&ndash; 👇 MiniMax 大模型官方 Starter（唯一AI依赖） &ndash;&gt;-->
+        <!--        👇 MiniMax 大模型官方 Starter（公司环境用） -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-minimax-spring-boot-starter</artifactId>
-            <version>${spring-ai.version}</version>
+            <artifactId>spring-ai-starter-model-minimax</artifactId>
         </dependency>
-        <!-- Ollama 本地大模型（家里部署时使用） -->
+        <!-- Ollama 本地大模型（家里部署 / embedding 始终走它） -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-ollama-spring-boot-starter</artifactId>
-            <version>${spring-ai.version}</version>
+            <artifactId>spring-ai-starter-model-ollama</artifactId>
         </dependency>
         <!--        lombok-->
         <dependency>
@@ -71,10 +69,10 @@
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
-        <!-- SpringAI 核心 -->
+        <!-- SpringAI 核心（2.x 中 artifactId 改名为 spring-ai-model） -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-core</artifactId>
+            <artifactId>spring-ai-model</artifactId>
         </dependency>
         <!--        redis-->
         <dependency>
@@ -82,17 +80,17 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-<!--         Source: https://mvnrepository.com/artifact/org.postgresql/postgresql -->
+        <!--         Source: https://mvnrepository.com/artifact/org.postgresql/postgresql -->
         <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>compile</scope>
         </dependency>
 
-<!--         ========== Vector Store ========== -->
+        <!--         ========== Vector Store ========== -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-pgvector-store-spring-boot-starter</artifactId>
+            <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
         </dependency>
 
         <!-- 文档解析（PDF/Word） -->
@@ -104,7 +102,7 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
-<!--         Source: https://mvnrepository.com/artifact/org.mybatis.spring.boot/mybatis-spring-boot-starter-->
+        <!--         Source: https://mvnrepository.com/artifact/org.mybatis.spring.boot/mybatis-spring-boot-starter-->
         <dependency>
             <groupId>org.mybatis.spring.boot</groupId>
             <artifactId>mybatis-spring-boot-starter</artifactId>
@@ -114,7 +112,7 @@
         <!-- Elasticsearch 向量数据库 Starter（SpringAI 自动配置 ElasticsearchVectorStore） -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-elasticsearch-store-spring-boot-starter</artifactId>
+            <artifactId>spring-ai-starter-vector-store-elasticsearch</artifactId>
         </dependency>
         <dependency>
             <groupId>co.elastic.clients</groupId>

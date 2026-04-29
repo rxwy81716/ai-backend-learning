@@ -152,10 +152,10 @@ Invoke-RestMethod -Method Post -Uri "$ES/$OLD/_analyze" `
 
 ## 排错速查
 
-| 现象 | 原因 |
-|---|---|
-| `unknown analyzer [ik_max_word]` | IK 插件未安装 / ES 没重启 |
-| `index_already_exists_exception` | 新索引名已存在，换 v3 / v4 |
-| `resource_already_exists_exception` 在 alias | 旧索引没删干净 |
-| 中文乱码 | `Body` 没用 UTF-8 字节数组（保留 `[System.Text.Encoding]::UTF8.GetBytes`） |
-| reindex 卡很久 | 改 `wait_for_completion=false` 异步执行 |
+| 现象                                          | 原因                                                               |
+|---------------------------------------------|------------------------------------------------------------------|
+| `unknown analyzer [ik_max_word]`            | IK 插件未安装 / ES 没重启                                                |
+| `index_already_exists_exception`            | 新索引名已存在，换 v3 / v4                                                |
+| `resource_already_exists_exception` 在 alias | 旧索引没删干净                                                          |
+| 中文乱码                                        | `Body` 没用 UTF-8 字节数组（保留 `[System.Text.Encoding]::UTF8.GetBytes`） |
+| reindex 卡很久                                 | 改 `wait_for_completion=false` 异步执行                               |

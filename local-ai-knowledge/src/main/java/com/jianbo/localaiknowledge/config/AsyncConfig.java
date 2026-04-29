@@ -4,12 +4,10 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * 异步/调度配置
+ * 调度配置（@Scheduled）。
  *
- * 文档解析已改为 Redisson 队列 + 独立消费者线程池（DocParseQueueConsumer）。
- * 保留此类供 @Scheduled 等场景使用。
+ * <p>文档解析走 Redisson 队列 + 独立消费者线程池（DocParseQueueConsumer），不依赖 @Async。
  */
 @Configuration
 @EnableScheduling
-public class AsyncConfig {
-}
+public class AsyncConfig {}

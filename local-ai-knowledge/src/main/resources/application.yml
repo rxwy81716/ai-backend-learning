@@ -7,10 +7,10 @@ spring:
     name: local-ai-knowledge
   ai:
     vectorstore:
-#      elasticsearch:
-#        index-name: knowledge_vector_store
-#        dimensions: 1024   # bge-m3的维度
-#        similarity: cosine
+      #      elasticsearch:
+      #        index-name: knowledge_vector_store
+      #        dimensions: 1024   # bge-m3的维度
+      #        similarity: cosine
       pgvector:
         index-type: hnsw              # 索引类型：HNSW（推荐）或 IVFFlat
         distance-type: COSINE_DISTANCE # 距离算法：余弦相似度
