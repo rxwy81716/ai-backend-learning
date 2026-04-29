@@ -1,8 +1,9 @@
 spring:
-  autoconfigure:
-    exclude:
-      - org.springframework.ai.autoconfigure.ollama.OllamaAutoConfiguration
   ai:
+    # Spring AI 2.x：chat 走 MiniMax；embedding 始终走 Ollama（OllamaApi 在 EmbeddingModelConfig 显式构造）
+    model:
+      chat: minimax
+      embedding: none
     minimax:
       api-key: ${MINIMAX_API_KEY:sk-cp-vBXrVb07yCb61nNn73fmjHvvNI_VIEyH-_WVwSmSNdFDX_EkZjfvt15XJwqVndDWJEZzxqCuy6PjzgNWdd3_4EPvGuSE_cD1yXki9zzHsoGybOUqYM8d5Jg}
       chat:

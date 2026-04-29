@@ -4,17 +4,17 @@
 
 ## 技术栈
 
-| 类别 | 技术 |
-|------|------|
-| 框架 | Spring Boot 4.0 + Spring AI |
-| LLM | MiniMax（ChatClient + Embedding） |
-| 向量存储 | Elasticsearch / PgVector |
-| 关系数据库 | PostgreSQL |
-| 缓存 | Redis（会话热缓存）+ Caffeine（本地缓存） |
-| 异步队列 | Redisson（阻塞队列，持久化任务） |
-| 文档解析 | Apache Tika |
-| 网络搜索 | Tavily API（可选降级） |
-| Java | 21 |
+| 类别    | 技术                              |
+|-------|---------------------------------|
+| 框架    | Spring Boot 4.0 + Spring AI     |
+| LLM   | MiniMax（ChatClient + Embedding） |
+| 向量存储  | Elasticsearch / PgVector        |
+| 关系数据库 | PostgreSQL                      |
+| 缓存    | Redis（会话热缓存）+ Caffeine（本地缓存）    |
+| 异步队列  | Redisson（阻塞队列，持久化任务）            |
+| 文档解析  | Apache Tika                     |
+| 网络搜索  | Tavily API（可选降级）                |
+| Java  | 21                              |
 
 ## 项目结构
 
@@ -194,11 +194,11 @@ mvn spring-boot:run
 
 ## 缓存策略
 
-| 缓存项 | 存储 | TTL | 用途 |
-|--------|------|-----|------|
-| SystemPrompt | Caffeine | 10 min | 避免每次请求查 DB |
-| 会话历史 | Redis | 30 min | 热会话加速，DB 兜底 |
-| 任务队列 | Redisson | 持久化 | JVM 重启不丢任务 |
+| 缓存项          | 存储       | TTL    | 用途          |
+|--------------|----------|--------|-------------|
+| SystemPrompt | Caffeine | 10 min | 避免每次请求查 DB  |
+| 会话历史         | Redis    | 30 min | 热会话加速，DB 兜底 |
+| 任务队列         | Redisson | 持久化    | JVM 重启不丢任务  |
 
 ## 后续规划
 

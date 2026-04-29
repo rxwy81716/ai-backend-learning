@@ -1,0 +1,7 @@
+﻿.\mvnw.cmd : Picked up JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
+所在位置 行:1 字符: 49
++ ... L_OPTIONS="-Dfile.encoding=UTF-8"; .\mvnw.cmd -q compile 2>&1 | Out-F ...
++                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (Picked up JAVA_....encoding=UTF-8:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

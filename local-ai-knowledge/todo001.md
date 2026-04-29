@@ -1,10 +1,8 @@
 ## 一、现状盘点
 
-当前 `@/d:/work/ai-backend-learning/local-ai-knowledge/src/main/java/com/jianbo/localaiknowledge/service/EsVectorSearchService.java` 大致是：
-
-
-
-
+当前
+`@/d:/work/ai-backend-learning/local-ai-knowledge/src/main/java/com/jianbo/localaiknowledge/service/EsVectorSearchService.java`
+大致是：
 
 ```
 用户 question
@@ -23,10 +21,6 @@
 ------
 
 ## 二、目标架构
-
-
-
-
 
 ```
 question
@@ -53,10 +47,6 @@ question
 ### Iteration 1 — BM25 关键词召回 + RRF 融合 ⭐ 最重要
 
 **目标**：先做"双路召回"，立刻可见效果。
-
-
-
-
 
 ```
 1. ES 索引 schema 升级
@@ -88,10 +78,6 @@ question
 
 **目标**：解决多轮对话里"它/这个/上面那个"召回崩溃的问题。
 
-
-
-
-
 ```
 1. 新增 QueryRewriteService
    - 输入：当前 question + 最近 3 轮 history
@@ -118,10 +104,6 @@ question
 ### Iteration 3 — Rerank 重排
 
 **目标**：把 top_20 → 精排 top_5，质量飞跃。
-
-
-
-
 
 ```
 1. 选型（任选其一）
@@ -152,10 +134,6 @@ question
 
 **目标**：解决"小片段精准召回 vs 大片段答得全"的矛盾。
 
-
-
-
-
 ```
 1. 切片策略改造（TextSplitterUtil）
    - 双层切片：
@@ -185,10 +163,6 @@ question
 ### Iteration 5 — 评测体系（贯穿始终，强烈建议第一步就搭）
 
 **目标**：每次改进都能量化，不靠"感觉"。
-
-
-
-
 
 ```
 1. 评测数据集
@@ -223,10 +197,6 @@ question
 
 yaml
 
-
-
-
-
 ```
 app:
   rag:
@@ -256,20 +226,16 @@ app:
 
 ## 五、依赖 / 中间件清单
 
-| 项                       | 何时引入 | 备注                             |
-| :----------------------- | :------- | :------------------------------- |
-| ES `ik_max_word` 分词器  | Iter 1   | `elasticsearch-analysis-ik` 插件 |
-| `CompletableFuture` 并发 | Iter 1   | JDK 自带                         |
-| BGE-Reranker 服务        | Iter 3   | Python 微服务 / DJL ONNX         |
-| 小型 Embedding（评测用） | Iter 5   | 复用现有 EmbeddingService        |
+| 项                      | 何时引入   | 备注                             |
+|:-----------------------|:-------|:-------------------------------|
+| ES `ik_max_word` 分词器   | Iter 1 | `elasticsearch-analysis-ik` 插件 |
+| `CompletableFuture` 并发 | Iter 1 | JDK 自带                         |
+| BGE-Reranker 服务        | Iter 3 | Python 微服务 / DJL ONNX          |
+| 小型 Embedding（评测用）      | Iter 5 | 复用现有 EmbeddingService          |
 
 ------
 
 ## 六、推荐推进顺序（按 ROI）
-
-
-
-
 
 ```
 Week 1: Iter 5 评测体系（先有标尺）

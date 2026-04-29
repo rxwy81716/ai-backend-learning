@@ -11,8 +11,8 @@ import com.jianbo.localaiknowledge.utils.TextCleanUtil;
 import com.jianbo.localaiknowledge.utils.TextSplitterUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.elasticsearch.client.Request;
-import org.elasticsearch.client.RestClient;
+import co.elastic.clients.transport.rest5_client.low_level.Request;
+import co.elastic.clients.transport.rest5_client.low_level.Rest5Client;
 import org.jspecify.annotations.NonNull;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -86,13 +86,15 @@ public class EsVectorStoreService {
     // term 查询只能匹配 keyword，对 text 字段无效，必须用 metadata.source.keyword
     StringBuilder queryBuilder = new StringBuilder();
     queryBuilder.append("{\"query\":{\"bool\":{\"must\":[");
-    queryBuilder.append("{\"term\":{\"metadata.source.keyword\":\"")
-            .append(source.replace("\"", "\\\""))
-            .append("\"}}");
+    queryBuilder
+        .append("{\"term\":{\"metadata.source.keyword\":\"")
+        .append(source.replace("\"", "\\\""))
+        .append("\"}}");
     if (userId != null && !userId.isBlank()) {
-      queryBuilder.append(",{\"term\":{\"metadata.user_id.keyword\":\"")
-              .append(userId.replace("\"", "\\\""))
-              .append("\"}}");
+      queryBuilder
+          .append(",{\"term\":{\"metadata.user_id.keyword\":\"")
+          .append(userId.replace("\"", "\\\""))
+          .append("\"}}");
     }
     queryBuilder.append("]}}}");
 
@@ -104,19 +106,28 @@ public class EsVectorStoreService {
   /**
    * 带用户归属的文档入库（用户上传为 PRIVATE，爬虫为 PUBLIC）
    *
-   * @param rawText  原始文本
-   * @param source   文档来源名
-   * @param userId   用户ID（爬虫入库传 null）
+   * @param rawText 原始文本
+   * @param source 文档来源名
+   * @param userId 用户ID（爬虫入库传 null）
    * @param docScope 文档范围：PRIVATE / PUBLIC
    */
   public int importDocuments(String rawText, String source, String userId, String docScope) {
     String clean = TextCleanUtil.clean(rawText);
     List<String> splitText = TextSplitterUtil.splitText(clean);
     log.debug("文本清洗切片完成:{}段,来源:{},scope:{}", splitText.size(), source, docScope);
+    return importChunks(splitText, source, userId, docScope);
+  }
 
-    List<Document> documents = getDocuments(source, splitText, userId, docScope);
+  /**
+   * 以预切片的文本入库（供调用方复用切片结果，避免在 ES / PG 双写场景下重复切片）。
+   *
+   * @return 入库 chunk 数量
+   */
+  public int importChunks(List<String> chunks, String source, String userId, String docScope) {
+    if (chunks == null || chunks.isEmpty()) return 0;
+    List<Document> documents = getDocuments(source, chunks, userId, docScope);
     vectorStore.add(documents);
-    log.debug("文档入库完成:{}段,来源:{},userId:{}", documents.size(), source, userId);
+    log.debug("ES 入库完成:{}段,来源:{},userId:{}", documents.size(), source, userId);
     return documents.size();
   }
 
@@ -124,8 +135,8 @@ public class EsVectorStoreService {
     return getDocuments(source, splitText, null, "PUBLIC");
   }
 
-  private static @NonNull List<Document> getDocuments(String source, List<String> splitText,
-                                                       String userId, String docScope) {
+  private static @NonNull List<Document> getDocuments(
+      String source, List<String> splitText, String userId, String docScope) {
     List<Document> documents = new ArrayList<>();
     for (int i = 0; i < splitText.size(); i++) {
       Map<String, Object> metadata = new HashMap<>();
@@ -142,8 +153,8 @@ public class EsVectorStoreService {
     return documents;
   }
 
-  //  ===============入库方式2 手动RestClient================
-  private final RestClient restClient; // ES 低级客户端
+  //  ===============入库方式2 手动 Rest5Client================
+  private final Rest5Client restClient; // ES 9.x 低级客户端（Apache HttpClient 5）
   private final EmbeddingService embeddingService;
   private final ObjectMapper objectMapper;
   private static final String INDEX_NAME = "knowledge_vector_store";
@@ -203,9 +214,9 @@ public class EsVectorStoreService {
     List<float[]> vectors = embeddingService.embedBatch(chunks);
     StringBuilder bulkBody = new StringBuilder();
     for (int i = 0; i < chunks.size(); i++) {
-      //action行
+      // action行
       bulkBody.append("{\"index\":{\"_index\": \"").append(INDEX_NAME).append("\"}}\n");
-      //document行
+      // document行
       HashMap<String, Object> doc = new HashMap<>();
       doc.put("doc_title", docTitle);
       doc.put("chunk_index", i);

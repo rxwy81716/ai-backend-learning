@@ -1,8 +1,8 @@
 spring:
-  autoconfigure:
-    exclude:
-      - org.springframework.ai.autoconfigure.minimax.MiniMaxAutoConfiguration
   ai:
+    model:
+      chat: ollama
+      embedding: ollama
     ollama:
       base-url: http://localhost:11434
       chat:
