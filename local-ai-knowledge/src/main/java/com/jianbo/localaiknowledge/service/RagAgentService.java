@@ -2,7 +2,8 @@ package com.jianbo.localaiknowledge.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jianbo.localaiknowledge.model.ChatMessage;
-import com.jianbo.localaiknowledge.model.SystemPrompt;
+import com.jianbo.localaiknowledge.service.agent.RagToolContext;
+import com.jianbo.localaiknowledge.service.agent.RagTools;
 import com.jianbo.localaiknowledge.utils.ChatContextUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,166 +13,121 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
+import java.time.Duration;
 import java.util.*;
 
 /**
- * RAG 智能路由 Agent（多智能体入口）
+ * RAG Agent（基于 Spring AI Tool Calling）
  *
- * 决策链路：
- *   1. 用户隔离检索（私有文档 + 公共文档）
- *   2. 知识库有结果 → 走 RAG 回答（最可靠）
- *   3. 知识库无结果 + 网络搜索已启用 → 降级到网络搜索
- *   4. 都无结果 → LLM 直答（换宽松 Prompt，用模型自身知识回答，可能有幻觉）
+ * <p><b>架构演进</b>：
+ * <pre>
+ *   旧版：Java 关键词匹配（isHotQuery）硬编码路由 → KB / 热榜 / 网搜 / LLM 直答
+ *   新版：LLM 自主调用 Tool（searchKnowledgeBase / queryHotSearch / searchWeb）
+ * </pre>
  *
- * 架构：
- *   ┌────────────────────────────────────┐
- *   │         RagAgentService              │  ← 路由层
- *   └───┬───────────┬───────────┬─────────┘
- *       │           │           │
- *   ┌───▼───┐ ┌───▼─────┐ ┌──▼──────┐
- *   │ Agent1 │ │ Agent2    │ │ Agent3     │
- *   │ 知识库 │ │ 网络搜索  │ │ LLM 直答  │
- *   │(ES RAG)│ │(Tavily)  │ │(自身知识) │
- *   └────────┘ └─────────┘ └──────────┘
+ * <p>路由决策权从 Java 移交给 LLM，工具描述由 {@link RagTools#callbacks()} 提供。
+ * 上下文 {@link RagToolContext} 用于：
+ * <ol>
+ *   <li>把 userId 隐式传给工具（防注入 + 不让 LLM 感知）</li>
+ *   <li>回收"实际调用了哪些工具 + 命中了哪些 docs"，构建响应里的 source / references</li>
+ * </ol>
+ *
+ * <p><b>chatMode</b>：
+ * <ul>
+ *   <li>{@code KNOWLEDGE / AGENT / 缺省}：启用 Tool Calling，由 LLM 自主决策（推荐）</li>
+ *   <li>{@code LLM}：禁用所有工具，强制 LLM 直答（用户主动选择，作为逃生口）</li>
+ * </ul>
  */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class RagAgentService {
 
-    private final HybridSearchService hybridSearchService;
-    private final WebSearchService webSearchService;
-    private final HotSearchService hotSearchService;
     private final ChatHistoryCacheService chatHistoryCache;
     private final SystemPromptService systemPromptService;
     private final ChatContextUtil chatContextUtil;
     private final ObjectMapper objectMapper;
+    private final RagTools ragTools;
 
     @Qualifier("MiniMaxChatClient")
     private final ChatClient chatClient;
 
-    private static final int RAG_TOP_K = 8;
     private static final int MAX_HISTORY_MESSAGES = 20;
-
-    /** LLM 调用超时（秒） */
-    private static final int LLM_TIMEOUT_SECONDS = 30;
-    /** LLM 调用最大重试次数 */
+    private static final int LLM_TIMEOUT_SECONDS = 60;
     private static final int LLM_MAX_RETRIES = 2;
 
-    /** 热榜 Agent Prompt */
-    private static final String HOT_SEARCH_PROMPT =
-            "你是一个热榜资讯助手。请根据以下实时热榜数据回答用户的问题。\n" +
-            "数据来自爬虫定时采集，请直接引用数据中的内容来回答。\n" +
-            "如果用户问特定平台的热榜，只展示对应平台的数据。\n" +
-            "请用简洁清晰的格式展示，标注排名和热度。\n\n" +
-            "【热榜数据】\n{context}";
+    /**
+     * Agent 模式系统提示：告诉 LLM 它有哪些工具、决策原则。
+     * 工具描述由 {@link RagTools#callbacks()} 自动注入到 LLM 的 function schema，
+     * 这里只补充"何时该用工具 / 如何引用来源"等高层指令。
+     */
+    private static final String AGENT_SYSTEM_PROMPT = """
+            你是一个企业知识库问答助手。你可以调用以下工具来获取回答所需信息：
+              - searchKnowledgeBase：检索企业私域知识库（最优先）
+              - queryHotSearch：查询主流平台实时热榜数据
+              - searchWeb：检索公开互联网（成本最高，谨慎使用）
+            
+            决策原则：
+              1. 一般性问题先调用 searchKnowledgeBase；只有当返回'知识库暂无相关内容'时，再考虑其它工具
+              2. 涉及'热搜/热榜/今日/排行'等时效性话题，调用 queryHotSearch
+              3. 知识库无结果且非热榜话题，可调用 searchWeb（如已启用）
+              4. 工具返回的内容里【来源】是真实可引用的，请在回答末尾用'参考来源：xxx'方式列出
+              5. 若所有工具都无相关结果，再基于自身常识作答，并明确告知'以下回答基于通用知识，仅供参考'
+              6. 不要编造工具未返回的链接、数据、人名
+            """;
 
-    /** LLM 直答 Prompt（知识库未命中时使用，允许模型用自身知识回答） */
+    /** LLM 直答 Prompt（chatMode=LLM 时使用，跳过所有工具） */
     private static final String LLM_DIRECT_PROMPT =
-            "你是一个智能问答助手。用户的问题在知识库中未找到相关内容，" +
-            "请基于你自身的知识尽可能准确地回答。\n\n" +
+            "你是一个智能问答助手。请基于你自身的知识尽可能准确地回答用户问题。\n" +
             "注意：\n" +
             "- 如果你不确定，请明确告知用户\"以下回答基于通用知识，仅供参考\"\n" +
-            "- 不要编造具体数据、链接或不存在的来源\n" +
-            "- 鼓励用户上传相关文档以获得更准确的回答";
+            "- 不要编造具体数据、链接或不存在的来源";
 
-    /**
-     * 智能问答（同步）—— 自动路由知识库 or 网络搜索
-     *
-     * @param sessionId  会话 ID（null = 单轮）
-     * @param question   用户问题
-     * @param userId     用户 ID（null = 只看公共文档）
-     * @param promptName SystemPrompt 名称（null = 默认）
-     * @param chatMode   问答模式：KNOWLEDGE=知识库模式（默认） / LLM=LLM直答模式
-     */
+    // ========================================================================
+    // 同步问答
+    // ========================================================================
+
     public Map<String, Object> chat(String sessionId, String question, String userId, String promptName, String chatMode) {
         long t0 = System.currentTimeMillis();
+        boolean toolsDisabled = "LLM".equalsIgnoreCase(chatMode);
 
-        String source;
-        String filledPrompt;
-        List<Document> docs = List.of();
+        // 准备 system prompt
+        String sysPrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
 
-        if ("LLM".equalsIgnoreCase(chatMode)) {
-            // ===== LLM 直答模式：跳过知识库检索，直接调用大模型 =====
-            source = "llm_direct";
-            filledPrompt = LLM_DIRECT_PROMPT;
-            log.info("用户选择 LLM 直答模式 | question={}", question);
-        } else if (hotSearchService.isHotQuery(question)) {
-            // ===== 热榜 Agent：检测到热搜相关问题，直接查 hot_items 表 =====
-            source = "hot_search";
-            String hotContext = hotSearchService.queryAndFormat(question);
-            filledPrompt = HOT_SEARCH_PROMPT.replace("{context}", hotContext);
-            log.info("Agent 路由 → 热榜查询 | question={}", question);
-        } else {
-            // ===== 知识库模式（默认）：混合检索（向量 + BM25 + RRF）=====
-            docs = hybridSearchService.searchWithOwnership(question, userId, RAG_TOP_K);
+        List<Message> messages = buildMessages(sysPrompt, sessionId, question);
 
-            long t1 = System.currentTimeMillis();
-            log.info("⏱ Hybrid检索 {}ms | hitDocs={}", t1 - t0, docs.size());
-
-            if (!docs.isEmpty()) {
-                // ===== 知识库命中：最可靠 =====
-                source = "knowledge_base";
-                String ctx = buildDocContext(docs);
-                String sysPrompt = loadSystemPrompt(promptName);
-                filledPrompt = sysPrompt.replace("{context}", ctx);
-                log.info("Agent 路由 → 知识库 | userId={}, hitDocs={}", userId, docs.size());
-            } else if (webSearchService.isEnabled()) {
-                // ===== Agent 2: 网络搜索降级 =====
-                log.info("知识库无结果，尝试网络搜索 | question={}", question);
-                var webResults = webSearchService.search(question);
-                if (!webResults.isEmpty()) {
-                    source = "web_search";
-                    String ctx = webSearchService.formatAsContext(webResults);
-                    String sysPrompt = loadSystemPrompt(promptName);
-                    filledPrompt = sysPrompt.replace("{context}", ctx);
-                    log.info("Agent 路由 → 网络搜索 | 结果数={}", webResults.size());
-                } else {
-                    source = "llm_direct";
-                    filledPrompt = LLM_DIRECT_PROMPT;
-                    log.info("Agent 路由 → LLM 直答（知识库+网搜均无结果）");
-                }
-            } else {
-                // ===== Agent 3: LLM 直答（网络搜索未启用） =====
-                source = "llm_direct";
-                filledPrompt = LLM_DIRECT_PROMPT;
-                log.info("Agent 路由 → LLM 直答（知识库无结果）");
-            }
+        // 调用 LLM（开启工具时由 ThreadLocal 上下文回收元数据）
+        RagToolContext.begin(userId);
+        String answer;
+        Set<String> invoked;
+        List<Document> retrievedDocs;
+        try {
+            answer = callLlmWithProtection(messages, !toolsDisabled);
+            RagToolContext ctx = RagToolContext.current();
+            invoked = ctx == null ? Set.of() : new LinkedHashSet<>(ctx.getInvokedTools());
+            retrievedDocs = ctx == null ? List.of() : new ArrayList<>(ctx.getRetrievedDocs());
+        } finally {
+            RagToolContext.clear();
         }
 
-        long t1 = System.currentTimeMillis();
-
-        List<Message> messages = new ArrayList<>();
-        messages.add(new SystemMessage(filledPrompt));
-
-        // 加载历史对话
-        if (sessionId != null) {
-            List<ChatMessage> history = chatHistoryCache.loadRecentHistory(sessionId, MAX_HISTORY_MESSAGES);
-            for (ChatMessage msg : history) {
-                switch (msg.getRole()) {
-                    case "user" -> messages.add(new UserMessage(msg.getContent()));
-                    case "assistant" -> messages.add(new AssistantMessage(msg.getContent()));
-                }
-            }
-        }
-        messages.add(new UserMessage(question));
-        chatContextUtil.trimByToken(messages);
-
-        // 调用 LLM（带超时 + 重试 + 降级兜底）
-        long t2 = System.currentTimeMillis();
-        String answer = callLlmWithProtection(messages);
-        long t3 = System.currentTimeMillis();
-        log.info("⏱ LLM生成 {}ms | source={}, answerLen={}", t3 - t2, source, answer.length());
+        long total = System.currentTimeMillis() - t0;
+        String source = decideSource(invoked, toolsDisabled);
+        log.info("⏱ Agent chat 总耗时 {}ms | source={}, invokedTools={}, hitDocs={}",
+                total, source, invoked, retrievedDocs.size());
 
         // 持久化
         if (sessionId != null) {
             chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, null, userId));
-            String meta = toJson(Map.of("source", source, "hitCount",
-                    docs.isEmpty() ? 0 : docs.size()));
+            String meta = toJson(Map.of(
+                    "source", source,
+                    "invokedTools", invoked,
+                    "hitCount", retrievedDocs.size()));
             chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "assistant", answer, meta, userId));
         }
 
@@ -179,73 +135,88 @@ public class RagAgentService {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("answer", answer);
         result.put("source", source);
-        result.put("hitCount", docs.size());
+        result.put("invokedTools", invoked);
+        result.put("hitCount", retrievedDocs.size());
         if (sessionId != null) {
             result.put("sessionId", sessionId);
         }
         if ("llm_direct".equals(source)) {
             result.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
         }
-        if (!docs.isEmpty()) {
-            result.put("references", buildReferences(docs));
+        if (!retrievedDocs.isEmpty()) {
+            result.put("references", buildReferences(retrievedDocs));
         }
-
-        long total = System.currentTimeMillis() - t0;
-        log.info("⏱ 总耗时 {}ms | ES={}ms, LLM={}ms, source={}", total, t1 - t0, t3 - t2, source);
         result.put("costMs", total);
         return result;
     }
 
-    /**
-     * 智能问答（SSE 流式）—— 自动路由
-     *
-     * @param chatMode 问答模式：KNOWLEDGE=知识库模式（默认） / LLM=LLM直答模式
-     */
+    // ========================================================================
+    // 流式问答
+    // ========================================================================
+
     public Flux<String> chatStream(String sessionId, String question, String userId, String promptName, String chatMode) {
-        String source;
-        String filledPrompt;
-        List<Document> docs = List.of();
+        boolean toolsDisabled = "LLM".equalsIgnoreCase(chatMode);
+        String sysPrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
+        List<Message> messages = buildMessages(sysPrompt, sessionId, question);
 
-        if ("LLM".equalsIgnoreCase(chatMode)) {
-            // ===== LLM 直答模式 =====
-            source = "llm_direct";
-            filledPrompt = LLM_DIRECT_PROMPT;
-            log.info("用户选择 LLM 直答模式（流式） | question={}", question);
-        } else if (hotSearchService.isHotQuery(question)) {
-            // ===== 热榜 Agent =====
-            source = "hot_search";
-            String hotContext = hotSearchService.queryAndFormat(question);
-            filledPrompt = HOT_SEARCH_PROMPT.replace("{context}", hotContext);
-            log.info("Agent 路由 → 热榜查询（流式） | question={}", question);
-        } else {
-            // ===== 知识库模式（默认）：混合检索 =====
-            docs = hybridSearchService.searchWithOwnership(question, userId, RAG_TOP_K);
-
-            if (!docs.isEmpty()) {
-                source = "knowledge_base";
-                String ctx = buildDocContext(docs);
-                String sysPrompt = loadSystemPrompt(promptName);
-                filledPrompt = sysPrompt.replace("{context}", ctx);
-            } else if (webSearchService.isEnabled()) {
-                var webResults = webSearchService.search(question);
-                if (!webResults.isEmpty()) {
-                    source = "web_search";
-                    String ctx = webSearchService.formatAsContext(webResults);
-                    String sysPrompt = loadSystemPrompt(promptName);
-                    filledPrompt = sysPrompt.replace("{context}", ctx);
-                } else {
-                    source = "llm_direct";
-                    filledPrompt = LLM_DIRECT_PROMPT;
-                }
-            } else {
-                source = "llm_direct";
-                filledPrompt = LLM_DIRECT_PROMPT;
-            }
+        if (sessionId != null) {
+            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, null, userId));
         }
 
-        List<Message> messages = new ArrayList<>();
-        messages.add(new SystemMessage(filledPrompt));
+        StringBuilder fullAnswer = new StringBuilder();
 
+        // 流式场景下 Spring AI 会在 LLM WebClient 的 Netty IO 线程上同步触发工具回调，
+        // ThreadLocal 跨线程不可见 → 改为显式创建 ctx 并通过闭包绑定到 FunctionCallback 与下游算子。
+        final RagToolContext ctx = RagToolContext.create(userId);
+
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
+        if (!toolsDisabled) {
+            spec = spec.functions(ragTools.callbacks(ctx).toArray(new FunctionCallback[0]));
+        }
+
+        return spec.stream()
+                .content()
+                .timeout(Duration.ofSeconds(LLM_TIMEOUT_SECONDS))
+                .doOnNext(fullAnswer::append)
+                .concatWith(Flux.defer(() -> {
+                    // 流末尾追加 [META] 段，前端可解析出工具调用与引用
+                    Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
+                    List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
+                    String source = decideSource(invoked, toolsDisabled);
+
+                    Map<String, Object> meta = new LinkedHashMap<>();
+                    meta.put("source", source);
+                    meta.put("invokedTools", invoked);
+                    meta.put("hitCount", docs.size());
+                    if (!docs.isEmpty()) meta.put("references", buildReferences(docs));
+                    if ("llm_direct".equals(source)) {
+                        meta.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
+                    }
+                    return Flux.just("[META]" + toJson(meta) + "[/META]");
+                }))
+                .doOnComplete(() -> {
+                    if (sessionId != null) {
+                        Set<String> invoked = ctx.getInvokedTools();
+                        String source = decideSource(invoked, toolsDisabled);
+                        String meta = toJson(Map.of("source", source, "invokedTools", invoked));
+                        chatHistoryCache.saveMessage(
+                                ChatMessage.of(sessionId, "assistant", fullAnswer.toString(), meta, userId));
+                    }
+                })
+                .onErrorResume(e -> {
+                    log.error("Agent 流式异常: {}", e.getMessage(), e);
+                    return Flux.just("抱歉，AI 服务暂时不可用，请稍后重试。");
+                })
+                .subscribeOn(Schedulers.boundedElastic());
+    }
+
+    // ========================================================================
+    // 内部工具方法
+    // ========================================================================
+
+    private List<Message> buildMessages(String sysPrompt, String sessionId, String question) {
+        List<Message> messages = new ArrayList<>();
+        messages.add(new SystemMessage(sysPrompt));
         if (sessionId != null) {
             List<ChatMessage> history = chatHistoryCache.loadRecentHistory(sessionId, MAX_HISTORY_MESSAGES);
             for (ChatMessage msg : history) {
@@ -257,70 +228,29 @@ public class RagAgentService {
         }
         messages.add(new UserMessage(question));
         chatContextUtil.trimByToken(messages);
-
-        if (sessionId != null) {
-            chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, null, userId));
-        }
-
-        final String finalSource = source;
-        final List<Document> finalDocs = docs;
-        StringBuilder fullAnswer = new StringBuilder();
-
-        // 构建元数据前缀（引用来源 + 回答来源标识），以 SSE 自定义事件推送
-        Map<String, Object> metaEvent = new LinkedHashMap<>();
-        metaEvent.put("source", finalSource);
-        metaEvent.put("hitCount", finalDocs.size());
-        if (!finalDocs.isEmpty()) {
-            metaEvent.put("references", buildReferences(finalDocs));
-        }
-        if ("llm_direct".equals(finalSource)) {
-            metaEvent.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
-        }
-        String metaJson = "[META]" + toJson(metaEvent) + "[/META]";
-
-        Flux<String> metaFlux = Flux.just(metaJson);
-        Flux<String> answerFlux = chatClient.prompt()
-                .messages(messages)
-                .stream()
-                .content()
-                .timeout(java.time.Duration.ofSeconds(LLM_TIMEOUT_SECONDS))
-                .doOnNext(fullAnswer::append)
-                .doOnComplete(() -> {
-                    if (sessionId != null) {
-                        String meta = toJson(Map.of("source", finalSource));
-                        chatHistoryCache.saveMessage(
-                                ChatMessage.of(sessionId, "assistant", fullAnswer.toString(), meta, userId));
-                    }
-                })
-                .onErrorResume(e -> {
-                    log.error("Agent 流式异常: {}", e.getMessage());
-                    return Flux.just("抱歉，AI 服务暂时不可用，请稍后重试。");
-                });
-
-        return Flux.concat(metaFlux, answerFlux);
+        return messages;
     }
 
-    // ==================== 辅助方法 ====================
-
     /**
-     * LLM 调用保护层：超时 + 重试 + 降级兜底
-     *
-     * 策略：
-     *   1. 单次调用超时 30 秒（防止 LLM 卡死占满线程）
-     *   2. 失败自动重试 2 次（覆盖偶发网络抖动）
-     *   3. 全部失败返回友好提示（不让用户看到异常堆栈）
+     * 同步 LLM 调用 + 工具注入 + 超时 + 重试 + 友好兜底
      */
-    private String callLlmWithProtection(List<Message> messages) {
+    private String callLlmWithProtection(List<Message> messages, boolean enableTools) {
         Exception lastException = null;
+        FunctionCallback[] callbacks = enableTools
+                ? ragTools.callbacks().toArray(new FunctionCallback[0])
+                : new FunctionCallback[0];
+
         for (int attempt = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
             try {
                 java.util.concurrent.CompletableFuture<String> future =
-                        java.util.concurrent.CompletableFuture.supplyAsync(() ->
-                                chatClient.prompt()
-                                        .messages(messages)
-                                        .call()
-                                        .content());
-
+                        java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                            // 在工作线程内沿用主线程的 RagToolContext
+                            RagToolContext parent = RagToolContext.current();
+                            // CompletableFuture.supplyAsync 在 ForkJoinPool，需要把 ctx 传进去
+                            // 但 supplyAsync 的 lambda 在新线程，主线程的 ThreadLocal 不可见，
+                            // 改为同步执行更稳妥
+                            return invokeChatClient(messages, callbacks);
+                        });
                 return future.get(LLM_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS);
             } catch (java.util.concurrent.TimeoutException e) {
                 log.warn("LLM 调用超时 | attempt={}/{}, timeout={}s", attempt, LLM_MAX_RETRIES, LLM_TIMEOUT_SECONDS);
@@ -335,15 +265,26 @@ public class RagAgentService {
         return "抱歉，AI 服务暂时不可用，请稍后重试。";
     }
 
-    private String buildDocContext(List<Document> docs) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < docs.size(); i++) {
-            Document doc = docs.get(i);
-            String docSource = doc.getMetadata().getOrDefault("source", "未知").toString();
-            sb.append("【").append(i + 1).append("】[来源: ").append(docSource).append("]\n");
-            sb.append(doc.getText()).append("\n\n");
+    private String invokeChatClient(List<Message> messages, FunctionCallback[] callbacks) {
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
+        if (callbacks.length > 0) {
+            spec = spec.functions(callbacks);
         }
-        return sb.toString();
+        return spec.call().content();
+    }
+
+    /**
+     * 根据工具调用记录推断响应来源标识。
+     * 优先级：knowledge_base > hot_search > web_search > llm_direct
+     */
+    private String decideSource(Set<String> invokedTools, boolean toolsDisabled) {
+        if (toolsDisabled || invokedTools == null || invokedTools.isEmpty()) {
+            return "llm_direct";
+        }
+        if (invokedTools.contains(RagTools.TOOL_KB)) return "knowledge_base";
+        if (invokedTools.contains(RagTools.TOOL_HOT)) return "hot_search";
+        if (invokedTools.contains(RagTools.TOOL_WEB)) return "web_search";
+        return "llm_direct";
     }
 
     private List<Map<String, Object>> buildReferences(List<Document> docs) {
@@ -351,29 +292,25 @@ public class RagAgentService {
         for (Document doc : docs) {
             Map<String, Object> ref = new LinkedHashMap<>();
             ref.put("source", doc.getMetadata().getOrDefault("source", "未知"));
-            ref.put("content", doc.getText().length() > 200
-                    ? doc.getText().substring(0, 200) + "..." : doc.getText());
+            String text = doc.getText() == null ? "" : doc.getText();
+            ref.put("content", text.length() > 200 ? text.substring(0, 200) + "..." : text);
             refs.add(ref);
         }
         return refs;
     }
 
-    private String loadSystemPrompt(String promptName) {
-        SystemPrompt prompt;
-        if (promptName != null && !promptName.isBlank()) {
-            prompt = systemPromptService.getByName(promptName);
-        } else {
-            prompt = systemPromptService.getDefault();
+    private String resolveAgentSystemPrompt(String promptName) {
+        // 用户自定义 SystemPrompt（如有）拼接到 Agent 协议之后，避免覆盖工具调用规则
+        if (promptName == null || promptName.isBlank()) {
+            return AGENT_SYSTEM_PROMPT;
         }
-        if (prompt == null) {
-            return """
-                你是一个知识库问答助手。请根据以下参考资料回答问题。
-                如果资料中没有相关内容，请回答"暂未找到相关信息"。
-                
-                【参考资料】
-                {context}""";
+        var prompt = systemPromptService.getByName(promptName);
+        if (prompt == null || prompt.getContent() == null || prompt.getContent().isBlank()) {
+            return AGENT_SYSTEM_PROMPT;
         }
-        return prompt.getContent();
+        // 用户 Prompt 里若包含 {context} 占位符，去掉（工具模式下不再外部注入 context）
+        String userPart = prompt.getContent().replace("{context}", "").trim();
+        return AGENT_SYSTEM_PROMPT + "\n\n附加风格指令：\n" + userPart;
     }
 
     private String toJson(Object obj) {

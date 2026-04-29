@@ -14,7 +14,7 @@ spring:
       pgvector:
         index-type: hnsw              # 索引类型：HNSW（推荐）或 IVFFlat
         distance-type: COSINE_DISTANCE # 距离算法：余弦相似度
-        dimensions: 1536              # 向量维度（必须与模型一致）
+        dimensions: 1024              # 向量维度（必须与模型一致）
         initialize-schema: true       # 自动创建 vector_store 表
         schema-name: public
         table-name: vector_store
@@ -27,7 +27,7 @@ spring:
         top-k: 5
       elasticsearch:
         index-name: knowledge_vector_store
-        dimensions: 1536
+        dimensions: 1024
         similarity: cosine
     elasticsearch:
       uris: http://localhost:9200  # ES 地址

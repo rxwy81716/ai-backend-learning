@@ -10,17 +10,17 @@ spring:
           model: MiniMax-M2.7
           temperature: 0.3
           max-tokens: 2048
+    ollama:
+      base-url: http://10.56.60.249:11434
       embedding:
         options:
-          model: embo-01
-
+          model: bge-m3
   datasource:
     driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge
     username: jianbo
     password: 525826
 app:
-  llm:
-    provider: minimax
-  minimax:
-    embedding-api-key: ${MINIMAX_EMBEDDING_KEY:sk-api-8dCzOLFyV8PwFtf7t8IeyPLLElOFF507H1rGOG6Fl41mMa4c1TtCsqa_SZDR4aLL30pPmGUYAfwP9Oo9cAwPOgmRfxHs7uL37UWPb4vRRFKHzY-_mOVD5eA}
+  jwt:
+    secret: local-dev-jwt-secret-key-at-least-32-chars-do-not-use-in-prod-2026
+  crawler-api-key: local-dev-crawler-api-key-2026
