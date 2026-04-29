@@ -15,6 +15,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -166,7 +167,9 @@ public class DocumentParseService {
      * 执行解析并入库（由队列消费者调用）
      *
      * 双写策略：ES 向量 + PG（document_chunk 原文 + vector_store 向量）
+     * 事务保证 PG 写入原子性（ES 写入不在事务范围内，如 PG 失败需手动补偿）
      */
+    @Transactional(rollbackFor = Exception.class)
     public void parseAndImport(String taskId) {
         DocumentTask task = taskMapper.selectByTaskId(taskId);
         if (task == null) {

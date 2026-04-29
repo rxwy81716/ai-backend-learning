@@ -44,6 +44,9 @@ public class DocumentController {
     @Value("${app.upload.dir:./uploads}")
     private String uploadDir;
 
+    @Value("${app.crawler-api-key:}")
+    private String crawlerApiKey;
+
     private static final long MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 
     /**
@@ -108,7 +111,16 @@ public class DocumentController {
      * docScope 固定为 PUBLIC，userId 设为 "crawler-bot"。
      */
     @PostMapping("/crawler-upload")
-    public Map<String, Object> crawlerUpload(@RequestParam("file") MultipartFile file) {
+    public Map<String, Object> crawlerUpload(
+            @RequestParam("file") MultipartFile file,
+            @RequestHeader(value = "X-Crawler-Key", required = false) String apiKey) {
+        // API Key 认证，防止任意人调用该接口上传文档
+        if (crawlerApiKey == null || crawlerApiKey.isBlank()) {
+            throw new IllegalStateException("服务未配置 crawler-api-key，接口不可用");
+        }
+        if (!crawlerApiKey.equals(apiKey)) {
+            throw new IllegalArgumentException("无效的 API Key");
+        }
         if (file.isEmpty()) {
             throw new IllegalArgumentException("文件不能为空");
         }

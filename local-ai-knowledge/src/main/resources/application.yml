@@ -53,8 +53,11 @@ app:
     api-key: ${TAVILY_API_KEY:}      # Tavily API Key（环境变量或直接填）
     max-results: 3
   jwt:
-    secret: ${JWT_SECRET:my-super-secret-key-for-jwt-which-is-at-least-256-bits-long!!}
+    # 生产环境必须通过环境变量 JWT_SECRET 配置，未配置则启动失败
+    secret: ${JWT_SECRET:}
     expiration-hours: 24              # Token 有效期（小时）
+  # 爬虫 API Key（用于 crawler-upload 接口认证）
+  crawler-api-key: ${CRAWLER_API_KEY:}
   rate-limit:
     anonymous-max: 20                 # 匿名用户每窗口最大请求数
     window-minutes: 60                # 限流窗口（分钟）

@@ -19,7 +19,7 @@ import java.util.List;
 @Component
 public class JwtUtil {
 
-    @Value("${app.jwt.secret:my-super-secret-key-for-jwt-which-is-at-least-256-bits-long!!}")
+    @Value("${app.jwt.secret}")
     private String secret;
 
     @Value("${app.jwt.expiration-hours:24}")

@@ -19,10 +19,12 @@ public record CrawlerProperties(
         ScheduleProps schedule
 ) {
 
-    /** 知识库服务 API 配置（爬虫专用接口无需认证） */
+    /** 知识库服务 API 配置 */
     public record KnowledgeApi(
             /** 服务基地址，如 http://localhost:12116 */
-            String baseUrl
+            String baseUrl,
+            /** crawler-upload 接口认证 API Key */
+            String apiKey
     ) {}
 
     /** 布隆过滤器配置 */

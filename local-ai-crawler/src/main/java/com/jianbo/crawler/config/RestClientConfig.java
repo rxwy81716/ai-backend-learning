@@ -25,17 +25,25 @@ public class RestClientConfig {
     @Bean("knowledgeRestClient")
     public RestClient knowledgeRestClient(CrawlerProperties props) {
         String baseUrl = props.knowledgeApi().baseUrl();
+        String apiKey = props.knowledgeApi().apiKey();
 
         // 使用 JDK 内置 HttpClient，天然支持虚拟线程
         var factory = new JdkClientHttpRequestFactory();
         factory.setReadTimeout(Duration.ofSeconds(60));
 
-        log.info("knowledgeRestClient 初始化完成：baseUrl={}", baseUrl);
+        log.info("knowledgeRestClient 初始化完成：baseUrl={}, apiKey已配置={}", 
+                baseUrl, apiKey != null && !apiKey.isBlank());
 
-        return RestClient.builder()
+        var builder = RestClient.builder()
                 .baseUrl(baseUrl)
-                .requestFactory(factory)
-                .build();
+                .requestFactory(factory);
+        
+        // 默认携带 API Key 请求头
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.defaultHeader("X-Crawler-Key", apiKey);
+        }
+        
+        return builder.build();
     }
 
     /**

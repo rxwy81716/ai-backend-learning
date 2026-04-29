@@ -24,3 +24,6 @@ spring:
 app:
   llm:
     provider: ollama
+  jwt:
+    secret: local-dev-jwt-secret-key-at-least-32-chars-do-not-use-in-prod-2026
+  crawler-api-key: local-dev-crawler-api-key-2026
