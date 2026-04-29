@@ -28,6 +28,7 @@ public class RestClientConfig {
 
         // 使用 JDK 内置 HttpClient，天然支持虚拟线程
         var factory = new JdkClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(10));
         factory.setReadTimeout(Duration.ofSeconds(60));
 
         log.info("knowledgeRestClient 初始化完成：baseUrl={}", baseUrl);

@@ -119,7 +119,7 @@ export function requestStream(
   }
   
   let buffer = ''
-  let aborted = false
+  const abortController = new AbortController()
   
   const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:12116'
   const fullUrl = url.startsWith('http') ? url : baseURL + url
@@ -127,7 +127,8 @@ export function requestStream(
   fetch(fullUrl, {
     method: 'POST',
     headers,
-    body: JSON.stringify(data)
+    body: JSON.stringify(data),
+    signal: abortController.signal
   })
     .then(response => {
       if (!response.ok) {
@@ -144,7 +145,7 @@ export function requestStream(
       
       function read() {
         readerRef.read().then(({ done, value }) => {
-          if (done || aborted) {
+          if (done) {
             if (buffer) {
               onMessage(buffer)
             }
@@ -174,14 +175,14 @@ export function requestStream(
       read()
     })
     .catch(error => {
-      if (!aborted) {
+      if (error.name !== 'AbortError') {
         onError?.(error)
       }
     })
   
   return {
     cancel: () => {
-      aborted = true
+      abortController.abort()
     }
   }
 }

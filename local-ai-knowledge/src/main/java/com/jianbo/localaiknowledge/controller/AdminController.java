@@ -12,6 +12,7 @@ import com.jianbo.localaiknowledge.service.MenuService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -32,6 +33,7 @@ public class AdminController {
     private final SysMenuMapper menuMapper;
     private final SystemPromptMapper systemPromptMapper;
     private final MenuService menuService;
+    private final PasswordEncoder passwordEncoder;
 
     // ==================== 用户管理 ====================
 
@@ -75,7 +77,7 @@ public class AdminController {
         if (userMapper.findByUsername(user.getUsername()) != null) {
             throw new IllegalArgumentException("用户名已存在");
         }
-        // 密码会在后续处理，这里存明文
+        user.setPassword(passwordEncoder.encode(user.getPassword()));
         userMapper.insert(user);
         
         // 分配默认角色
@@ -127,9 +129,12 @@ public class AdminController {
     @GetMapping("/roles")
     public List<SysRole> getRoles() {
         List<SysRole> roles = roleMapper.findAll();
-        for (SysRole role : roles) {
-            int count = userMapper.countByRoleId(role.getId());
-            role.setUserCount(count);
+        if (!roles.isEmpty()) {
+            List<Long> roleIds = roles.stream().map(SysRole::getId).toList();
+            Map<Long, Integer> countMap = userMapper.countByRoleIds(roleIds);
+            for (SysRole role : roles) {
+                role.setUserCount(countMap.getOrDefault(role.getId(), 0));
+            }
         }
         return roles;
     }

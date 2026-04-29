@@ -5,6 +5,7 @@ import com.jianbo.localaiknowledge.model.SysUser;
 import org.apache.ibatis.annotations.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 用户 Mapper
@@ -67,6 +68,28 @@ public interface SysUserMapper {
     /** 统计某角色的用户数量 */
     @Select("SELECT COUNT(*) FROM sys_user_role WHERE role_id = #{roleId}")
     int countByRoleId(@Param("roleId") Long roleId);
+
+    /** 批量统计多个角色的用户数量（解决 N+1 查询） */
+    @MapKey("roleId")
+    @Select("<script>" +
+            "SELECT role_id AS roleId, COUNT(*) AS count FROM sys_user_role " +
+            "WHERE role_id IN " +
+            "<foreach item='id' collection='roleIds' open='(' separator=',' close=')'>" +
+            "#{id}" +
+            "</foreach>" +
+            " GROUP BY role_id" +
+            "</script>")
+    Map<Long, Map<String, Object>> countByRoleIdsRaw(@Param("roleIds") List<Long> roleIds);
+
+    /** 批量统计多个角色的用户数量（便捷方法） */
+    default Map<Long, Integer> countByRoleIds(List<Long> roleIds) {
+        Map<Long, Map<String, Object>> raw = countByRoleIdsRaw(roleIds);
+        Map<Long, Integer> result = new java.util.HashMap<>();
+        if (raw != null) {
+            raw.forEach((roleId, row) -> result.put(roleId, ((Number) row.get("count")).intValue()));
+        }
+        return result;
+    }
 
     /** 检查用户名是否存在 */
     @Select("SELECT COUNT(*) > 0 FROM sys_user WHERE username = #{username}")

@@ -10,6 +10,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.concurrent.Semaphore;
+
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -43,6 +45,9 @@ public class CrawlPipelineService {
     private final HotItemRepository hotItemRepository;
     private final KnowledgeApiService knowledgeApiService;
     private final TaskLogRepository taskLogRepository;
+
+    /** 并发控制信号量（最多同时执行3个爬虫） */
+    private final Semaphore concurrencySemaphore = new Semaphore(3);
 
     /** 按来源索引的爬虫 Map（懒加载） */
     private volatile Map<CrawlSource, CrawlerStrategy> crawlerMap;
@@ -167,7 +172,17 @@ public class CrawlPipelineService {
     public List<PipelineResult> executeAll(String triggerType) {
         log.info("========== 全量爬虫流水线启动 ==========");
         List<PipelineResult> results = getCrawlerMap().keySet().stream()
-                .map(s -> execute(s, triggerType))
+                .map(s -> {
+                    try {
+                        concurrencySemaphore.acquire();
+                        return execute(s, triggerType);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return new PipelineResult(s, false, 0, 0, 0, triggerType, "任务被中断");
+                    } finally {
+                        concurrencySemaphore.release();
+                    }
+                })
                 .toList();
 
         long successCount = results.stream().filter(PipelineResult::success).count();

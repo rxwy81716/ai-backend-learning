@@ -68,9 +68,6 @@ public class RagController {
             sessionId = UUID.randomUUID().toString().replace("-", "");
         }
         String userId = SecurityUtil.getCurrentUserIdStr();
-        if (userId == null) {
-            userId = body.get("userId");
-        }
         String promptName = body.get("promptName");
         String chatMode = body.getOrDefault("chatMode", "KNOWLEDGE");
 
@@ -93,9 +90,6 @@ public class RagController {
             sessionId = UUID.randomUUID().toString().replace("-", "");
         }
         String userId = SecurityUtil.getCurrentUserIdStr();
-        if (userId == null) {
-            userId = body.get("userId");
-        }
         String promptName = body.get("promptName");
         String chatMode = body.getOrDefault("chatMode", "KNOWLEDGE");
 

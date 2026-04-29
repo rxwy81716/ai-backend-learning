@@ -68,12 +68,12 @@ public class SecurityConfig {
             .csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
-            // 路由规则
+            // 路由规则（具体路径需放在通配符之前）
             .authorizeHttpRequests(auth -> auth
+                // 注册登录公开
+                .requestMatchers("/auth/login", "/auth/register").permitAll()
                 // /auth/me 和 /auth/refresh 需要认证
                 .requestMatchers("/auth/me", "/auth/refresh").authenticated()
-                // 注册登录公开
-                .requestMatchers("/auth/**").permitAll()
                 // 用户接口：需要认证
                 .requestMatchers("/api/user/**").authenticated()
                 // 管理员接口：必须 ROLE_ADMIN

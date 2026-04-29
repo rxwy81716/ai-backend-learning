@@ -24,6 +24,9 @@ const CrawlerManage = () => import('@/views/admin/CrawlerManage.vue')
 // 个人中心
 const UserProfile = () => import('@/views/profile/UserProfile.vue')
 
+// 使用指南
+const UserGuide = () => import('@/views/guide/UserGuide.vue')
+
 // 每日热榜
 const HotDashboard = () => import('@/views/hot/HotDashboard.vue')
 const HotHistory = () => import('@/views/hot/HotHistory.vue')
@@ -65,8 +68,14 @@ const privateRoutes: RouteRecordRaw[] = [
   {
     path: '/',
     component: Layout,
-    redirect: '/rag',
+    redirect: '/guide',
     children: [
+      {
+        path: 'guide',
+        name: 'UserGuide',
+        component: UserGuide,
+        meta: { title: '使用指南', icon: 'Notebook' }
+      },
       {
         path: 'rag',
         name: 'RagChat',
@@ -199,8 +208,10 @@ router.beforeEach(async (to, _from, next) => {
     }
   }
 
-  // 获取用户菜单（根据用户角色权限动态获取）
-  menuStore.fetchUserMenus()
+  // 获取用户菜单（根据用户角色权限动态获取，避免重复请求）
+  if (!menuStore.hasLoaded) {
+    menuStore.fetchUserMenus()
+  }
 
   next()
 })

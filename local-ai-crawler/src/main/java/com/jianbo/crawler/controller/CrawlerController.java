@@ -61,8 +61,12 @@ public class CrawlerController {
      */
     @PostMapping("/execute/{source}")
     public PipelineResult execute(@PathVariable String source) {
-        CrawlSource crawlSource = CrawlSource.valueOf(source.toUpperCase());
-        return pipelineService.execute(crawlSource, "MANUAL");
+        try {
+            CrawlSource crawlSource = CrawlSource.valueOf(source.toUpperCase());
+            return pipelineService.execute(crawlSource, "MANUAL");
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("不支持的数据来源: " + source + "，可选: " + Arrays.stream(CrawlSource.values()).map(Enum::name).toList());
+        }
     }
 
     /**
@@ -80,12 +84,16 @@ public class CrawlerController {
      */
     @PostMapping("/crawl-only/{source}")
     public CrawlResult crawlOnly(@PathVariable String source) {
-        CrawlSource crawlSource = CrawlSource.valueOf(source.toUpperCase());
-        CrawlerStrategy crawler = crawlers.stream()
-                .filter(c -> c.getSource() == crawlSource)
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("未找到爬虫: " + source));
-        return crawler.crawl();
+        try {
+            CrawlSource crawlSource = CrawlSource.valueOf(source.toUpperCase());
+            CrawlerStrategy crawler = crawlers.stream()
+                    .filter(c -> c.getSource() == crawlSource)
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalArgumentException("未找到爬虫: " + source));
+            return crawler.crawl();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("不支持的数据来源: " + source + "，可选: " + Arrays.stream(CrawlSource.values()).map(Enum::name).toList());
+        }
     }
 
     /**

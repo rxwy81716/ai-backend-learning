@@ -60,6 +60,12 @@
             text
             @click="isCollapsed = !isCollapsed"
           />
+          <el-button
+            :icon="HomeFilled"
+            text
+            @click="router.push('/guide')"
+            title="首页"
+          />
           <el-breadcrumb separator="/">
             <el-breadcrumb-item :to="{ path: '/' }">首页</el-breadcrumb-item>
             <el-breadcrumb-item v-if="currentRoute.meta?.title">
@@ -126,7 +132,8 @@ import {
   UserFilled,
   User,
   ArrowDown,
-  SwitchButton
+  SwitchButton,
+  HomeFilled
 } from '@element-plus/icons-vue'
 
 const route = useRoute()

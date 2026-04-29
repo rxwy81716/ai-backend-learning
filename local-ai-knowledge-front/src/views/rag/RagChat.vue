@@ -415,9 +415,23 @@ const copyAnswer = () => {
   ElMessage.success('已复制到剪贴板')
 }
 
+// HTML转义（防止XSS）
+const escapeHtml = (text: string) => {
+  const map: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  }
+  return text.replace(/[&<>"']/g, (m) => map[m])
+}
+
 // 格式化消息（支持简单的markdown）
 const formatMessage = (content: string) => {
-  return content
+  // 先转义HTML
+  const escaped = escapeHtml(content)
+  return escaped
     .replace(/\n/g, '<br>')
     .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')

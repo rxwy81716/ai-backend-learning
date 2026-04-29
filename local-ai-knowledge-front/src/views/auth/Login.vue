@@ -123,7 +123,7 @@ const handleLogin = async () => {
       }
 
       ElMessage.success('登录成功')
-      router.push('/rag')
+      router.push('/guide')
     } catch (error: any) {
       // 显示后端返回的错误信息
       const errorMsg = error?.response?.data?.message || error?.message || '登录失败，请稍后重试'

@@ -55,7 +55,7 @@ export const useMenuStore = defineStore('menu', () => {
         name: m.name || m.path.split('/').pop() || '',
         title: m.name,
         icon: m.icon || 'Document',
-        order: m.sortOrder || 99,
+        order: m.sortOrder ?? 99,
         children: m.children && m.children.length > 0
           ? m.children.map(convertMenu)
           : undefined
@@ -65,7 +65,7 @@ export const useMenuStore = defineStore('menu', () => {
     const result = backendMenus.map(convertMenu)
 
     const sortMenus = (items: MenuItem[]) => {
-      items.sort((a, b) => (a.order || 99) - (b.order || 99))
+      items.sort((a, b) => (a.order ?? 99) - (b.order ?? 99))
       items.forEach(item => {
         if (item.children?.length) sortMenus(item.children)
       })
@@ -78,6 +78,13 @@ export const useMenuStore = defineStore('menu', () => {
   // 默认菜单
   function getDefaultMenus(): MenuItem[] {
     return [
+      {
+        path: '/guide',
+        name: 'UserGuide',
+        title: '使用指南',
+        icon: 'Notebook',
+        order: 0
+      },
       {
         path: '/rag',
         name: 'RagChat',

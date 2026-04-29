@@ -239,7 +239,14 @@ public class DocumentController {
             throw new IllegalArgumentException("任务不存在");
         }
 
-        Path filePath = Paths.get(task.getFilePath());
+        Path filePath = Paths.get(task.getFilePath()).normalize();
+        Path uploadDirPath = Paths.get(uploadDir).normalize();
+        
+        // 校验文件路径是否在允许的目录下，防止路径遍历攻击
+        if (!filePath.startsWith(uploadDirPath)) {
+            throw new IllegalArgumentException("非法的文件路径");
+        }
+        
         if (!Files.exists(filePath)) {
             throw new IllegalArgumentException("文件不存在");
         }

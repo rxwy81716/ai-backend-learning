@@ -87,6 +87,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(Exception.class)
     public R<?> handleException(Exception e) {
         log.error("系统异常", e);
+        // 生产环境不返回详细错误信息，避免泄露敏感信息
         return R.serverError("系统繁忙，请稍后重试");
     }
 }
