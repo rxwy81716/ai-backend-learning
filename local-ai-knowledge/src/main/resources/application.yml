@@ -61,6 +61,15 @@ app:
   rate-limit:
     anonymous-max: 20                 # 匿名用户每窗口最大请求数
     window-minutes: 60                # 限流窗口（分钟）
+  rag:
+    # 混合检索：向量召回 + BM25 关键词召回 + RRF 融合
+    hybrid:
+      enabled: false                   # 关闭后退化为纯向量检索
+      vector-top-k: 30                # 向量召回数（融合前）
+      keyword-top-k: 30               # BM25 召回数（融合前）
+      rrf-k: 60                       # RRF 平滑常数（论文推荐 60）
+      parallel-timeout-ms: 3000       # 双路并发超时
+      similarity-threshold: 0.25      # 向量召回最低相似度
 mybatis:
   configuration:
     map-underscore-to-camel-case: true

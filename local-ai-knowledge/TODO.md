@@ -150,12 +150,17 @@
 
 ### F1. 检索质量升级（RAG 真正落地）
 ```
-□ 混合检索：ES BM25 + 向量召回（rrf 融合）
-□ Query Rewriting：LLM 改写用户问题（多轮指代消解 / 关键词扩展）
-□ Rerank 重排：BGE-Reranker 或 Cohere Rerank API 二阶段精排
-□ Parent-Child 切片：召回小片段 → 返回完整段落上下文
-□ 检索召回评估接口：/api/rag/eval（人工标注 + recall@k）
+✅ Iter1 混合检索：ES BM25 + 向量召回（RRF 融合，CompletableFuture 并发 + 超时降级）
+   - EsKeywordSearchService（BM25 + 用户归属过滤）
+   - HybridSearchService（双路并发 + RRF k=60 融合 + 元数据回写）
+   - 配置开关 app.rag.hybrid.enabled
+   - ik_max_word 中文分词迁移脚本 db/es_index_ik.md
+□ Iter2 Query Rewriting：LLM 改写用户问题（多轮指代消解 / 关键词扩展）
+□ Iter3 Rerank 重排：BGE-Reranker 或 Cohere Rerank API 二阶段精排
+□ Iter4 Parent-Child 切片：召回小片段 → 返回完整段落上下文
+□ Iter5 检索召回评估接口：/api/rag/eval（人工标注 + recall@k）
 ```
+> 简历亮点详见 `docs/简历亮点-RAG检索质量升级.md`
 > 这是 **RAG 项目的天花板**，比堆其他功能更值钱。
 
 ### F2. 文档增强（让"上传文档"不再是终点）

@@ -43,7 +43,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class RagAgentService {
 
-    private final EsVectorSearchService searchService;
+    private final HybridSearchService hybridSearchService;
     private final WebSearchService webSearchService;
     private final HotSearchService hotSearchService;
     private final ChatHistoryCacheService chatHistoryCache;
@@ -55,7 +55,6 @@ public class RagAgentService {
     private final ChatClient chatClient;
 
     private static final int RAG_TOP_K = 8;
-    private static final double SIMILARITY_THRESHOLD = 0.25;
     private static final int MAX_HISTORY_MESSAGES = 20;
 
     /** LLM 调用超时（秒） */
@@ -108,13 +107,11 @@ public class RagAgentService {
             filledPrompt = HOT_SEARCH_PROMPT.replace("{context}", hotContext);
             log.info("Agent 路由 → 热榜查询 | question={}", question);
         } else {
-            // ===== 知识库模式（默认）：检索私有+公有知识库 =====
-            docs = (userId != null && !userId.isBlank())
-                    ? searchService.searchWithOwnership(question, userId, RAG_TOP_K, SIMILARITY_THRESHOLD)
-                    : searchService.search(question, RAG_TOP_K, SIMILARITY_THRESHOLD);
+            // ===== 知识库模式（默认）：混合检索（向量 + BM25 + RRF）=====
+            docs = hybridSearchService.searchWithOwnership(question, userId, RAG_TOP_K);
 
             long t1 = System.currentTimeMillis();
-            log.info("⏱ ES检索 {}ms | hitDocs={}", t1 - t0, docs.size());
+            log.info("⏱ Hybrid检索 {}ms | hitDocs={}", t1 - t0, docs.size());
 
             if (!docs.isEmpty()) {
                 // ===== 知识库命中：最可靠 =====
@@ -221,10 +218,8 @@ public class RagAgentService {
             filledPrompt = HOT_SEARCH_PROMPT.replace("{context}", hotContext);
             log.info("Agent 路由 → 热榜查询（流式） | question={}", question);
         } else {
-            // ===== 知识库模式（默认） =====
-            docs = (userId != null && !userId.isBlank())
-                    ? searchService.searchWithOwnership(question, userId, RAG_TOP_K, SIMILARITY_THRESHOLD)
-                    : searchService.search(question, RAG_TOP_K, SIMILARITY_THRESHOLD);
+            // ===== 知识库模式（默认）：混合检索 =====
+            docs = hybridSearchService.searchWithOwnership(question, userId, RAG_TOP_K);
 
             if (!docs.isEmpty()) {
                 source = "knowledge_base";
