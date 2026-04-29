@@ -174,7 +174,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadInstance, UploadFile } from 'element-plus'
 import { uploadDocument, getAllTasks, getTaskStatus, getTaskLogs, deleteDocument, getDownloadUrl } from '@/api/document'
@@ -198,6 +198,7 @@ const selectedFile = ref<File | null>(null)
 const fileList = ref<UploadFile[]>([])
 const uploadRef = ref<UploadInstance>()
 const uploadDocScope = ref<DocScope>('PRIVATE')
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // 状态标签映射
 const statusLabel = (status: TaskStatus) => {
@@ -256,10 +257,32 @@ const handleUpload = async () => {
     ElMessage.success(`文件上传成功，任务ID: ${res.taskId}`)
     uploadDialogVisible.value = false
     loadTasks()
+    startPolling()
   } catch (error: any) {
     ElMessage.error(error.message || '上传失败')
   } finally {
     uploadLoading.value = false
+  }
+}
+
+// 自动轮询解析状态（上传后自动开始，全部完成后自动停止）
+const startPolling = () => {
+  if (pollTimer) return
+  pollTimer = setInterval(async () => {
+    await loadTasks()
+    const hasPending = tasks.value.some(t => 
+      t.status === 'UPLOADED' || t.status === 'PARSING' || t.status === 'IMPORTING'
+    )
+    if (!hasPending) {
+      stopPolling()
+    }
+  }, 3000)
+}
+
+const stopPolling = () => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
   }
 }
 
@@ -338,7 +361,17 @@ const formatDate = (dateStr: string) => {
 }
 
 onMounted(() => {
-  loadTasks()
+  // 加载任务列表，如果有未完成的任务自动开始轮询
+  loadTasks().then(() => {
+    const hasPending = tasks.value.some(t =>
+      t.status === 'UPLOADED' || t.status === 'PARSING' || t.status === 'IMPORTING'
+    )
+    if (hasPending) startPolling()
+  })
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
 

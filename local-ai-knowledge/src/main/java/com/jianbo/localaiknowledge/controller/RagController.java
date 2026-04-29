@@ -10,6 +10,8 @@ import com.jianbo.localaiknowledge.service.SystemPromptService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RMap;
+import org.redisson.api.RedissonClient;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
@@ -45,6 +47,9 @@ public class RagController {
     private final ChatConversationMapper conversationMapper;
     private final ChatHistoryCacheService chatHistoryCache;
     private final SystemPromptService promptService;
+    private final RedissonClient redissonClient;
+
+    private static final String SESSION_TITLE_KEY = "chat:session:titles";
 
     // ==================== 智能问答 ====================
 
@@ -104,29 +109,54 @@ public class RagController {
      */
     @GetMapping("/sessions")
     public List<ChatSession> sessions() {
-        //获取用户id
         String userId = SecurityUtil.getCurrentUserIdStr();
         if (userId == null) {
             return List.of();
         }
+        RMap<String, String> titleMap = redissonClient.getMap(SESSION_TITLE_KEY);
         List<String> sessionIds = conversationMapper.selectByUserId(userId);
         return sessionIds.stream().map(sessionId -> {
             ChatSession session = new ChatSession();
             session.setSessionId(sessionId);
-            String firstQuestion = conversationMapper.selectFirstQuestion(sessionId);
-            if (firstQuestion != null && !firstQuestion.isBlank()) {
-                String title = firstQuestion.length() > 30
-                    ? firstQuestion.substring(0, 30) + "..."
-                    : firstQuestion;
-                session.setTitle(title);
-                session.setFirstQuestion(firstQuestion);
+
+            // 优先使用用户自定义标题
+            String customTitle = titleMap.get(sessionId);
+            if (customTitle != null && !customTitle.isBlank()) {
+                session.setTitle(customTitle);
             } else {
-                session.setTitle("新对话");
+                String firstQuestion = conversationMapper.selectFirstQuestion(sessionId);
+                if (firstQuestion != null && !firstQuestion.isBlank()) {
+                    String title = firstQuestion.length() > 30
+                        ? firstQuestion.substring(0, 30) + "..."
+                        : firstQuestion;
+                    session.setTitle(title);
+                    session.setFirstQuestion(firstQuestion);
+                } else {
+                    session.setTitle("新对话");
+                }
             }
             Long createdAt = conversationMapper.selectCreatedAt(sessionId);
             session.setCreatedAt(createdAt != null ? createdAt : System.currentTimeMillis());
             return session;
         }).toList();
+    }
+
+    /**
+     * 重命名会话
+     */
+    @PutMapping("/session/{sessionId}/title")
+    public Map<String, Object> renameSession(@PathVariable String sessionId,
+                                              @RequestBody Map<String, String> body) {
+        String title = body.get("title");
+        if (title == null || title.isBlank()) {
+            throw new IllegalArgumentException("标题不能为空");
+        }
+        if (title.length() > 50) {
+            title = title.substring(0, 50);
+        }
+        RMap<String, String> titleMap = redissonClient.getMap(SESSION_TITLE_KEY);
+        titleMap.put(sessionId, title);
+        return Map.of("sessionId", sessionId, "title", title);
     }
 
     /**

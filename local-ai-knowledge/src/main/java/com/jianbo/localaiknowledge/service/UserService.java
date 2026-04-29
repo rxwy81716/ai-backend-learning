@@ -159,6 +159,23 @@ public class UserService {
         log.info("用户状态变更 | userId={}, enabled={}", userId, enabled);
     }
 
+    /**
+     * Token 续期：根据当前 userId 签发新 Token
+     */
+    public Map<String, Object> refreshToken(Long userId) {
+        SysUser user = userMapper.findById(userId);
+        if (user == null) {
+            throw new IllegalArgumentException("用户不存在");
+        }
+        if (!user.getEnabled()) {
+            throw new IllegalArgumentException("账号已被禁用");
+        }
+        List<SysRole> roles = userMapper.findRolesByUserId(userId);
+        List<String> roleCodes = roles.stream().map(SysRole::getCode).toList();
+        String token = jwtUtil.generateToken(userId, user.getUsername(), roleCodes);
+        return buildLoginResponse(user, roleCodes, token);
+    }
+
     // ==================== 私有方法 ====================
 
     private Map<String, Object> buildLoginResponse(SysUser user, List<String> roles, String token) {

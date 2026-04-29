@@ -53,8 +53,8 @@ public class RagAgentService {
     @Qualifier("MiniMaxChatClient")
     private final ChatClient chatClient;
 
-    private static final int RAG_TOP_K = 5;
-    private static final double SIMILARITY_THRESHOLD = 0.3;
+    private static final int RAG_TOP_K = 8;
+    private static final double SIMILARITY_THRESHOLD = 0.25;
     private static final int MAX_HISTORY_MESSAGES = 20;
 
     /** LLM 调用超时（秒） */
@@ -247,9 +247,23 @@ public class RagAgentService {
         }
 
         final String finalSource = source;
+        final List<Document> finalDocs = docs;
         StringBuilder fullAnswer = new StringBuilder();
 
-        return chatClient.prompt()
+        // 构建元数据前缀（引用来源 + 回答来源标识），以 SSE 自定义事件推送
+        Map<String, Object> metaEvent = new LinkedHashMap<>();
+        metaEvent.put("source", finalSource);
+        metaEvent.put("hitCount", finalDocs.size());
+        if (!finalDocs.isEmpty()) {
+            metaEvent.put("references", buildReferences(finalDocs));
+        }
+        if ("llm_direct".equals(finalSource)) {
+            metaEvent.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
+        }
+        String metaJson = "[META]" + toJson(metaEvent) + "[/META]";
+
+        Flux<String> metaFlux = Flux.just(metaJson);
+        Flux<String> answerFlux = chatClient.prompt()
                 .messages(messages)
                 .stream()
                 .content()
@@ -266,6 +280,8 @@ public class RagAgentService {
                     log.error("Agent 流式异常: {}", e.getMessage());
                     return Flux.just("抱歉，AI 服务暂时不可用，请稍后重试。");
                 });
+
+        return Flux.concat(metaFlux, answerFlux);
     }
 
     // ==================== 辅助方法 ====================

@@ -15,3 +15,8 @@ export function register(data: RegisterRequest) {
 export function getCurrentUser() {
   return request.get<any, any>('/auth/me')
 }
+
+// Token 续期
+export function refreshToken() {
+  return request.post<any, LoginResponse>('/auth/refresh')
+}

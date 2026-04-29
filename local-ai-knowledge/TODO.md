@@ -62,45 +62,67 @@
 ✅ 用户文档隔离：上传绑定 userId，检索按 doc_scope 过滤
 ```
 
-## Step 4：用户认证 JWT（对应 Day29）
+## Step 4：用户认证 JWT（对应 Day29）✅
 
 ```
-□ 添加 spring-boot-starter-security + jjwt 依赖
-□ 创建 User 表 + UserService（BCrypt 加密）
-□ AuthController：POST /auth/register, POST /auth/login
-□ JwtAuthenticationFilter：解析 Token → SecurityContext
-□ SecurityConfig：/auth/** 放行，其他需认证
-□ 文档上传、RAG 问答等接口绑定用户身份
+✅ 添加 spring-boot-starter-security + jjwt 依赖
+✅ 创建 User 表 + UserService（BCrypt 加密）
+✅ AuthController：POST /auth/register, POST /auth/login, GET /auth/me
+✅ JwtAuthenticationFilter：解析 Token → SecurityContext
+✅ SecurityConfig：/auth/** 放行，/api/admin/** 需 ROLE_ADMIN，其他需认证
+✅ 文档上传、RAG 问答等接口绑定用户身份（SecurityUtil）
+✅ RateLimitFilter 限流过滤器
+✅ RBAC 权限体系（AdminController：用户/角色/菜单/智能体管理）
+✅ UserController：根据角色返回动态菜单树
 ```
 
-## Step 5：前端对接（对应 Day28/Day30/Day31）
+## Step 5：前端对接（对应 Day28/Day30/Day31）✅
 
 ```
-□ 在 demo-springai-front 中新增知识库管理页：
-    - 文件上传组件（el-upload + 进度条）
-    - 任务列表（轮询状态，显示解析进度）
-    - 操作日志弹窗
-□ RAG 问答页面：
-    - SSE 流式展示 AI 回答
-    - 答案下方展示来源引用卡片
-□ 多轮对话 UI：
+✅ local-ai-knowledge-front（Vue3 + TS + Element Plus + Pinia）
+✅ 登录/注册页面 + axios Token 拦截器 + 401 自动跳转
+✅ 路由守卫（认证 + 角色权限校验）
+✅ Layout 布局（侧栏 + 头部 + 面包屑 + 移动端适配）
+✅ Pinia 用户 Store + 菜单 Store（动态菜单权限）
+✅ 知识库管理页：
+    - 文件上传组件（el-upload + 拖拽 + 文档范围选择）
+    - 任务列表（状态标签 + 切片进度条）
+    - 操作日志弹窗（任务详情 + 日志时间线）
+    - 文档下载 / 删除（权限校验）
+✅ RAG 问答页面：
+    - SSE 流式展示（fetch + ReadableStream）
+    - 知识库模式 / LLM 直答模式切换
+    - Markdown 简单渲染
+✅ 多轮对话 UI：
     - 左侧会话列表 + 右侧消息区
     - 新建/切换/删除会话
-□ 登录/注册页面 + axios Token 拦截器
+    - 移动端侧滑面板适配
+✅ 管理后台（ROLE_ADMIN）：
+    - 用户管理（CRUD + 角色分配 + 启禁用）
+    - 角色管理（CRUD + 菜单权限绑定）
+    - 菜单管理
+    - 智能体管理（SystemPrompt CRUD + 设为默认）
+✅ 403 / 404 错误页
+
+✅ 小缺口（已补齐）：
+    ✅ 答案下方引用来源卡片（SSE 流式推送 [META] 元数据 + 前端折叠卡片展示）
+    ✅ 会话重命名（Redis 存储自定义标题 + PUT /api/rag/session/{id}/title）
+    ✅ 文档上传后自动轮询解析状态（3秒轮询，全部完成自动停止）
+    ✅ Token 到期前自动刷新（JWT 解析过期时间 + 到期前2小时自动续期）
+    ✅ 个人中心页面（/profile 路由 + 使用统计）
+    ✅ 文本切片优化（MAX_CHUNK_SIZE 500→800, OVERLAP_SIZE 50→100, RAG_TOP_K 5→8）
 ```
 
-## Step 6：Docker Compose 部署（对应 Day32）
+## Step 6：Docker Compose 部署（对应 Day32）⏭️ 跳过
 
 ```
-□ 编写 Dockerfile（后端 JRE21 镜像）
-□ docker-compose.yml 编排：
-    - PostgreSQL + pgvector
-    - Redis
-    - Elasticsearch
-    - 后端 Spring Boot
-    - 前端 Nginx
-□ Nginx 配置：静态资源 + /api 反代 + SSE proxy_buffering off
-□ 健康检查 + 自动重启
+⏭️ 当前架构不适用 Docker Compose：
+    - PG 在远程服务器，Redis/ES/Ollama 在本地
+    - 通过 ZeroTier 组网 + frp 内网穿透
+    - Docker Compose 要求所有服务同机编排，与跨机器部署冲突
+    - 服务器配置不足以承载全套服务
+
+    未来条件满足时可启用（服务器升级 / 需要云部署演示）
 ```
 
 ## Step 7：爬虫数据采集（对应 Day33-38，新模块 demo-crawler）
@@ -146,9 +168,9 @@
 | P0 | Step 1 建表验证 | 当前代码的前置条件 |
 | P0 | Step 2 RAG 问答 | 项目核心能力，没有这个等于没有产品 |
 | P1 | Step 3 多轮对话 | 提升体验，面试加分项 |
-| P1 | Step 4 JWT 认证 | 生产必备，简历必写 |
-| P1 | Step 5 前端对接 | 可视化展示，面试演示用 |
-| P2 | Step 6 Docker 部署 | 工程化能力体现 |
+| ~~P1~~ | ~~Step 4 JWT 认证~~ | ✅ 已完成（含 RBAC 权限体系） |
+| ~~P1~~ | ~~Step 5 前端对接~~ | ✅ 已完成（含管理后台 + 移动端适配） |
+| ~~P2~~ | ~~Step 6 Docker 部署~~ | ⏭️ 跳过（跨机器架构不适用，远期再议） |
 | P2 | Step 7 爬虫 | 独立模块，可并行 |
 | P3 | Step 8 AI SQL | 大特性，工作量大，可后做 |
 | P3 | Step 9 智能化 | 远期目标 |

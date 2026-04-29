@@ -70,8 +70,8 @@ public class SecurityConfig {
 
             // 路由规则
             .authorizeHttpRequests(auth -> auth
-                // /auth/me 需要认证
-                .requestMatchers("/auth/me").authenticated()
+                // /auth/me 和 /auth/refresh 需要认证
+                .requestMatchers("/auth/me", "/auth/refresh").authenticated()
                 // 注册登录公开
                 .requestMatchers("/auth/**").permitAll()
                 // 用户接口：需要认证

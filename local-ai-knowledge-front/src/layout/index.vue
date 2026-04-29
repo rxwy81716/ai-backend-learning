@@ -1,7 +1,14 @@
 <template>
   <el-container class="layout-container">
+    <!-- 移动端遮罩层 -->
+    <div 
+      v-if="!isCollapsed && isMobile" 
+      class="sidebar-overlay"
+      @click="isCollapsed = true"
+    ></div>
+
     <!-- 侧边栏 -->
-    <el-aside :width="isCollapsed ? '64px' : '220px'" class="sidebar">
+    <el-aside :width="isCollapsed ? '64px' : '220px'" class="sidebar" :class="{ 'is-collapsed': isCollapsed }">
       <div class="logo-container">
         <img v-if="!isCollapsed" src="@/assets/logo.svg" alt="logo" class="logo" />
         <span v-if="!isCollapsed" class="logo-text">AI知识库</span>
@@ -15,6 +22,7 @@
         :collapse-transition="false"
         router
         class="sidebar-menu"
+        @select="handleMenuSelect"
       >
         <template v-for="menu in menus" :key="menu.path">
           <!-- 有子菜单 -->
@@ -106,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { useUserStore } from '@/stores/user'
@@ -141,12 +149,39 @@ watch(
 // 菜单列表
 const menus = computed(() => menuStore.menus)
 
+// 菜单选择后：移动端自动关闭侧边栏
+const handleMenuSelect = (index: string) => {
+  if (isMobile.value) {
+    isCollapsed.value = true
+  }
+}
+
+// 判断是否为移动端
+const isMobile = ref(window.innerWidth <= 768)
+
+// 监听窗口大小变化
+const handleResize = () => {
+  isMobile.value = window.innerWidth <= 768
+  // 移动端默认折叠侧边栏
+  if (isMobile.value) {
+    isCollapsed.value = true
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('resize', handleResize)
+  handleResize()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
+})
+
 // 处理下拉菜单命令
 const handleCommand = (command: string) => {
   switch (command) {
     case 'profile':
-      // 个人中心（暂时跳转到问答页面）
-      router.push('/rag')
+      router.push('/profile')
       break
     case 'logout':
       ElMessageBox.confirm('确定要退出登录吗？', '提示', {
@@ -292,5 +327,97 @@ const handleCommand = (command: string) => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* 移动端适配 */
+@media screen and (max-width: 768px) {
+  .layout-container {
+    overflow: hidden;
+  }
+
+  /* 侧边栏：默认隐藏，移动端全屏覆盖 */
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 100vh;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.3s ease;
+    width: 220px !important;
+  }
+
+  .sidebar:not(.is-collapsed) {
+    transform: translateX(0);
+  }
+
+  .sidebar.is-collapsed {
+    transform: translateX(-100%);
+  }
+
+  /* 移动端遮罩层 */
+  .sidebar-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+  }
+
+  /* 主内容区：移动端占满 */
+  .layout-container > .el-container {
+    flex-direction: column;
+  }
+
+  .header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 998;
+    padding: 0 10px;
+    height: 60px;
+  }
+
+  .header-left .el-breadcrumb {
+    display: none;
+  }
+
+  .header-left .el-button {
+    padding: 8px;
+  }
+
+  .role-tag {
+    display: none;
+  }
+
+  .username {
+    display: none;
+  }
+
+  .main-content {
+    margin-top: 60px;
+    padding: 10px;
+    height: calc(100vh - 60px);
+    overflow-y: auto;
+    box-sizing: border-box;
+  }
+
+  /* 隐藏logo文字 */
+  .logo-text {
+    display: none;
+  }
+}
+
+@media screen and (max-width: 480px) {
+  .header-right {
+    gap: 8px;
+  }
+
+  .user-info {
+    padding: 4px;
+  }
 }
 </style>

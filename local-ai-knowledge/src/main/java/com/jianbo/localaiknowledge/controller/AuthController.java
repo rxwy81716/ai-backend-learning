@@ -70,4 +70,16 @@ public class AuthController {
         Long userId = (Long) authentication.getPrincipal();
         return userService.getUserInfo(userId);
     }
+
+    /**
+     * Token 续期（用当前有效 Token 换取新 Token）
+     */
+    @PostMapping("/auth/refresh")
+    public Map<String, Object> refresh(Authentication authentication) {
+        if (authentication == null) {
+            throw new IllegalArgumentException("未认证");
+        }
+        Long userId = (Long) authentication.getPrincipal();
+        return userService.refreshToken(userId);
+    }
 }

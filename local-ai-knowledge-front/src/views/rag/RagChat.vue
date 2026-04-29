@@ -4,7 +4,12 @@
       <!-- 左侧历史会话 -->
       <div class="history-panel" :class="{ 'is-collapsed': isHistoryCollapsed }">
         <div class="history-header">
-          <h3>历史会话</h3>
+          <div class="header-left">
+            <el-button text @click="toggleHistory" class="close-btn">
+              <el-icon><Fold /></el-icon>
+            </el-button>
+            <h3>历史会话</h3>
+          </div>
           <el-button text @click="createNewSession">
             <el-icon><Plus /></el-icon>
             新对话
@@ -33,7 +38,11 @@
             <el-icon><ChatLineSquare /></el-icon>
             <span class="session-text">{{ session.title || formatSessionId(session.sessionId) }}</span>
             <el-icon
-              class="delete-btn"
+              class="action-btn"
+              @click.stop="openRenameDialog(session)"
+            ><Edit /></el-icon>
+            <el-icon
+              class="action-btn delete-btn"
               @click.stop="deleteSession(session.sessionId)"
             ><Delete /></el-icon>
           </div>
@@ -41,12 +50,20 @@
         </div>
       </div>
 
+      <!-- 移动端遮罩层 -->
+      <div 
+        v-if="!isHistoryCollapsed && isMobile" 
+        class="mobile-overlay" 
+        @click="isHistoryCollapsed = true"
+      ></div>
+
       <!-- 右侧聊天区域 -->
       <div class="chat-panel">
         <!-- 聊天头部 -->
         <div class="chat-header">
-          <el-button text @click="isHistoryCollapsed = !isHistoryCollapsed">
+          <el-button text @click="toggleHistory">
             <el-icon><Expand v-if="isHistoryCollapsed" /><Fold v-else /></el-icon>
+            历史会话
           </el-button>
           <h2>智能问答</h2>
           <el-button text @click="clearChat">
@@ -75,6 +92,34 @@
             </div>
             <div class="message-content">
               <div class="message-text" v-html="formatMessage(msg.content)"></div>
+              <!-- 回答来源标签 -->
+              <div v-if="msg.role === 'assistant' && msg.meta" class="message-meta">
+                <el-tag v-if="msg.meta.source === 'knowledge_base'" type="success" size="small" effect="plain">
+                  知识库回答 · 命中 {{ msg.meta.hitCount }} 条
+                </el-tag>
+                <el-tag v-else-if="msg.meta.source === 'web_search'" type="warning" size="small" effect="plain">
+                  网络搜索回答
+                </el-tag>
+                <el-tag v-else-if="msg.meta.source === 'llm_direct'" type="info" size="small" effect="plain">
+                  AI 通用知识 · 仅供参考
+                </el-tag>
+              </div>
+              <!-- 引用来源卡片 -->
+              <div v-if="msg.role === 'assistant' && msg.meta?.references?.length" class="references-section">
+                <div class="refs-header" @click="msg.showRefs = !msg.showRefs">
+                  <el-icon><Document /></el-icon>
+                  <span>查看 {{ msg.meta.references.length }} 个来源</span>
+                  <el-icon class="refs-arrow" :class="{ expanded: msg.showRefs }"><ArrowDown /></el-icon>
+                </div>
+                <transition name="refs-fade">
+                  <div v-if="msg.showRefs" class="refs-list">
+                    <div v-for="(ref, idx) in msg.meta.references" :key="idx" class="ref-card">
+                      <div class="ref-source">来源：{{ ref.source }}</div>
+                      <div class="ref-content">{{ ref.content }}</div>
+                    </div>
+                  </div>
+                </transition>
+              </div>
               <div class="message-time" v-if="msg.timestamp">
                 {{ formatTime(msg.timestamp) }}
               </div>
@@ -143,39 +188,76 @@
         </div>
       </div>
     </div>
+
+    <!-- 重命名对话框 -->
+    <el-dialog v-model="renameDialogVisible" title="重命名会话" width="400px">
+      <el-input v-model="renameTitle" placeholder="请输入新标题" maxlength="50" show-word-limit
+        @keydown.enter.prevent="handleRename" />
+      <template #footer>
+        <el-button @click="renameDialogVisible = false">取消</el-button>
+        <el-button type="primary" :disabled="!renameTitle.trim()" @click="handleRename">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getSessions, getHistory, deleteSession as deleteSessionApi } from '@/api/rag'
+import { getSessions, getHistory, deleteSession as deleteSessionApi, renameSession as renameSessionApi } from '@/api/rag'
 import type { Session, ChatMode } from '@/types'
 import { requestStream } from '@/utils/request'
-import type { ChatMessage } from '@/types'
+
+interface StreamChatMessage {
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  timestamp?: string
+  meta?: {
+    source?: string
+    hitCount?: number
+    references?: { source: string; content: string }[]
+    disclaimer?: string
+  }
+  showRefs?: boolean
+}
 import {
   Plus,
   ChatLineSquare,
   Delete,
+  Edit,
   Expand,
   Fold,
   UserFilled,
   ChatDotRound,
   Promotion,
   DocumentCopy,
-  Collection
+  Collection,
+  Document,
+  ArrowDown
 } from '@element-plus/icons-vue'
 
-const isHistoryCollapsed = ref(false)
+// 移动端默认折叠历史面板
+const isHistoryCollapsed = ref(window.innerWidth <= 768)
 const sessions = ref<Session[]>([])
 const currentSessionId = ref<string>('')
-const messages = ref<ChatMessage[]>([])
+const messages = ref<StreamChatMessage[]>([])
 const question = ref('')
 const isStreaming = ref(false)
 const messageListRef = ref<HTMLElement>()
 const currentAnswer = ref('')
 const lastAnswer = ref('')
 const chatMode = ref<ChatMode>('KNOWLEDGE')
+const renameDialogVisible = ref(false)
+const renameTitle = ref('')
+const renameSessionId = ref('')
+
+// 切换历史面板（移动端点击遮罩关闭）
+const toggleHistory = () => {
+  isHistoryCollapsed.value = !isHistoryCollapsed.value
+}
+
+// 判断是否为移动端
+const isMobile = computed(() => window.innerWidth <= 768)
 
 // 加载历史会话
 const loadSessions = async () => {
@@ -218,6 +300,29 @@ const deleteSession = async (sessionId: string) => {
   }
 }
 
+// 打开重命名对话框
+const openRenameDialog = (session: Session) => {
+  renameSessionId.value = session.sessionId
+  renameTitle.value = session.title || ''
+  renameDialogVisible.value = true
+}
+
+// 执行重命名
+const handleRename = async () => {
+  if (!renameTitle.value.trim()) return
+  try {
+    await renameSessionApi(renameSessionId.value, renameTitle.value.trim())
+    const session = sessions.value.find(s => s.sessionId === renameSessionId.value)
+    if (session) {
+      session.title = renameTitle.value.trim()
+    }
+    renameDialogVisible.value = false
+    ElMessage.success('重命名成功')
+  } catch (error) {
+    console.error('重命名失败:', error)
+  }
+}
+
 // 清空聊天
 const clearChat = () => {
   messages.value = []
@@ -244,6 +349,7 @@ const handleSend = async () => {
   // 流式请求
   isStreaming.value = true
   let fullAnswer = ''
+  let streamMeta: StreamChatMessage['meta'] = undefined
 
   requestStream(
     '/api/rag/chat/stream',
@@ -253,6 +359,19 @@ const handleSend = async () => {
       chatMode: chatMode.value
     },
     (text) => {
+      // 解析 [META]...[/META] 元数据（引用来源、回答类型）
+      const metaMatch = text.match(/\[META\](.*?)\[\/META\]/s)
+      if (metaMatch) {
+        try {
+          streamMeta = JSON.parse(metaMatch[1])
+        } catch (e) {
+          console.warn('解析元数据失败:', e)
+        }
+        // 去掉元数据标记，只保留正文
+        text = text.replace(/\[META\].*?\[\/META\]/s, '')
+        if (!text.trim()) return
+      }
+
       fullAnswer += text
       currentAnswer.value = fullAnswer
       
@@ -262,10 +381,15 @@ const handleSend = async () => {
         messages.value.push({
           role: 'assistant',
           content: fullAnswer,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          meta: streamMeta,
+          showRefs: false
         })
       } else {
         lastMsg.content = fullAnswer
+        if (streamMeta && !lastMsg.meta) {
+          lastMsg.meta = streamMeta
+        }
       }
       scrollToBottom()
     },
@@ -346,21 +470,31 @@ onMounted(() => {
   border-right: 1px solid #eee;
   display: flex;
   flex-direction: column;
-  transition: width 0.3s;
+  transition: width 0.3s, overflow 0.3s;
+  overflow: hidden;
 }
 
 .history-panel.is-collapsed {
   width: 0;
   border-right: none;
-  overflow: hidden;
 }
 
 .history-header {
-  padding: 16px;
+  padding: 12px 16px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   border-bottom: 1px solid #eee;
+}
+
+.history-header .header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-header .close-btn {
+  padding: 4px;
 }
 
 .history-header h3 {
@@ -413,13 +547,18 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.delete-btn {
+.action-btn {
   opacity: 0;
   transition: opacity 0.2s;
+  flex-shrink: 0;
 }
 
-.history-item:hover .delete-btn {
+.history-item:hover .action-btn {
   opacity: 1;
+}
+
+.delete-btn:hover {
+  color: #f56c6c;
 }
 
 .chat-panel {
@@ -517,6 +656,81 @@ onMounted(() => {
   border-bottom-left-radius: 4px;
 }
 
+.message-meta {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+}
+
+.references-section {
+  margin-top: 8px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.refs-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #f0f2f5;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #606266;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.refs-header:hover {
+  background: #e4e7ed;
+}
+
+.refs-arrow {
+  margin-left: auto;
+  transition: transform 0.2s;
+}
+
+.refs-arrow.expanded {
+  transform: rotate(180deg);
+}
+
+.refs-list {
+  padding: 8px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ref-card {
+  background: #fafafa;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.ref-source {
+  color: #409eff;
+  font-weight: 500;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.ref-content {
+  color: #606266;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.refs-fade-enter-active, .refs-fade-leave-active {
+  transition: opacity 0.2s, max-height 0.3s;
+}
+
+.refs-fade-enter-from, .refs-fade-leave-to {
+  opacity: 0;
+}
+
 .message-time {
   font-size: 12px;
   color: #999;
@@ -573,34 +787,77 @@ onMounted(() => {
   margin-top: 12px;
 }
 
-/* 移动端适配 */
+  /* 移动端适配 */
 @media screen and (max-width: 768px) {
   .rag-chat-container {
     height: calc(100vh - 60px);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
   }
 
   .chat-wrapper {
     border-radius: 0;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
 
+  /* 移动端：聊天面板独占宽度 */
+  .chat-panel {
+    width: 100%;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* 历史面板：和菜单一样，固定定位从左侧滑入 */
   .history-panel {
     position: fixed;
-    top: 60px;
+    top: 0;
     left: 0;
-    width: 250px !important;
-    height: calc(100vh - 60px);
-    z-index: 999;
+    width: 80vw !important;
+    max-width: 300px;
+    height: 100vh;
+    z-index: 1001;
     box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
     transform: translateX(-100%);
     transition: transform 0.3s ease;
+    background: #fafafa;
+    border-right: 1px solid #eee;
   }
 
+  /* 展开状态：滑入显示 */
   .history-panel:not(.is-collapsed) {
     transform: translateX(0);
   }
 
+  /* 折叠状态：完全隐藏 */
   .history-panel.is-collapsed {
-    width: 250px !important;
+    transform: translateX(-100%) !important;
+    width: 0 !important;
+    overflow: hidden;
+  }
+
+  /* 移动端遮罩层：z-index 要低于历史面板 */
+  .mobile-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 1000;
+  }
+
+  .history-header {
+    padding: 12px 10px;
+  }
+
+  .history-header h3 {
+    font-size: 15px;
   }
 
   .chat-header {
@@ -614,6 +871,9 @@ onMounted(() => {
 
   .message-list {
     padding: 10px;
+    flex: 1;
+    overflow-y: auto;
+    height: 0; /* 让flex生效 */
   }
 
   .message-content {
@@ -636,12 +896,12 @@ onMounted(() => {
   }
 
   .input-actions {
-    flex-direction: column;
-    gap: 8px;
+    flex-direction: row;
+    gap: 10px;
   }
 
   .input-actions .el-button {
-    width: 100%;
+    flex: 1;
   }
 }
 

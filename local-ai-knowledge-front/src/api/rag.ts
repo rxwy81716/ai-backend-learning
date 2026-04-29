@@ -26,8 +26,13 @@ export function getHistory(sessionId: string) {
 }
 
 // 删除会话
-export function deleteSession(sessionId: string) {
+export const deleteSession = (sessionId: string) => {
   return request.delete<any, { message: string; sessionId: string }>(`/api/rag/session/${sessionId}`)
+}
+
+// 重命名会话
+export const renameSession = (sessionId: string, title: string) => {
+  return request.put<any, { message: string; sessionId: string }>(`/api/rag/session/${sessionId}/title`, { title })
 }
 
 // ==================== Prompt管理 ====================

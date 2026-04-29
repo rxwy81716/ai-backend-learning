@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as apiLogin, register as apiRegister, getCurrentUser } from '@/api/auth'
+import { login as apiLogin, register as apiRegister, getCurrentUser, refreshToken as apiRefreshToken } from '@/api/auth'
 import { storage } from '@/utils/storage'
 import router from '@/router'
 import { useMenuStore } from './menu'
@@ -11,6 +11,42 @@ export const useUserStore = defineStore('user', () => {
   const token = ref<string>(storage.getToken() || '')
   const userInfo = ref<SysUser | null>(storage.getUserInfo())
   const loading = ref(false)
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null
+
+  // 解析 JWT 过期时间（秒级时间戳）
+  function getTokenExpiry(t: string): number | null {
+    try {
+      const payload = JSON.parse(atob(t.split('.')[1]))
+      return payload.exp || null
+    } catch {
+      return null
+    }
+  }
+
+  // 启动 Token 自动续期定时器
+  function scheduleTokenRefresh() {
+    if (refreshTimer) clearTimeout(refreshTimer)
+    if (!token.value) return
+
+    const exp = getTokenExpiry(token.value)
+    if (!exp) return
+
+    // 在到期前 2 小时刷新（如果剩余不足 2 小时，则 10 秒后立即刷新）
+    const now = Math.floor(Date.now() / 1000)
+    const remaining = exp - now
+    const refreshIn = Math.max((remaining - 7200) * 1000, 10000)
+
+    refreshTimer = setTimeout(async () => {
+      try {
+        const res = await apiRefreshToken()
+        token.value = res.token
+        storage.setToken(res.token)
+        scheduleTokenRefresh()
+      } catch {
+        // 刷新失败不强制退出，等下次请求 401 再处理
+      }
+    }, refreshIn)
+  }
 
   // 计算属性
   const isLoggedIn = computed(() => !!token.value)
@@ -39,6 +75,9 @@ export const useUserStore = defineStore('user', () => {
       menuStore.clearMenus()
       menuStore.fetchUserMenus()
 
+      // 启动 Token 自动续期
+      scheduleTokenRefresh()
+
       return res
     } finally {
       loading.value = false
@@ -58,6 +97,7 @@ export const useUserStore = defineStore('user', () => {
 
   // 退出登录
   function logout() {
+    if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null }
     token.value = ''
     userInfo.value = null
     storage.clear()
@@ -76,6 +116,7 @@ export const useUserStore = defineStore('user', () => {
       const res = await getCurrentUser()
       userInfo.value = res
       storage.setUserInfo(res)
+      scheduleTokenRefresh()
     } catch {
       logout()
     }

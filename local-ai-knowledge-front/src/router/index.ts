@@ -20,6 +20,9 @@ const RoleManage = () => import('@/views/admin/RoleManage.vue')
 const MenuManage = () => import('@/views/admin/MenuManage.vue')
 const AgentManage = () => import('@/views/admin/AgentManage.vue')
 
+// 个人中心
+const UserProfile = () => import('@/views/profile/UserProfile.vue')
+
 // 错误页面
 const NotFound = () => import('@/views/error/404.vue')
 const Forbidden = () => import('@/views/error/403.vue')
@@ -70,6 +73,12 @@ const privateRoutes: RouteRecordRaw[] = [
         name: 'DocumentManage',
         component: DocumentManage,
         meta: { title: '文档管理', icon: 'Document', requiredRoles: ['ROLE_USER', 'ROLE_ADMIN'] }
+      },
+      {
+        path: 'profile',
+        name: 'UserProfile',
+        component: UserProfile,
+        meta: { title: '个人中心', icon: 'User' }
       },
       {
         path: 'admin',
