@@ -2,6 +2,7 @@ package com.jianbo.localaiknowledge.config;
 
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
@@ -34,5 +35,11 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .exposedHeaders("Content-Disposition")
                 .allowCredentials(true)
                 .maxAge(3600);
+    }
+
+    @Override
+    public void addViewControllers(ViewControllerRegistry registry) {
+        // 根路径重定向到 API 文档或返回简单欢迎信息
+        registry.addRedirectViewController("/", "/api/rag/sessions");
     }
 }

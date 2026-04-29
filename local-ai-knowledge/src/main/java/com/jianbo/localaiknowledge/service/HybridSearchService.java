@@ -3,6 +3,11 @@ package com.jianbo.localaiknowledge.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +36,8 @@ import java.util.concurrent.TimeoutException;
  *   <li>对单路漏召的文档容错（只要另一路命中就能进 topK）</li>
  *   <li>实现极简，工程稳定</li>
  * </ul>
+ *
+ * <p>查询优先级：ES 向量检索 → PG 向量检索（ES 空结果或失败时降级）
  */
 @Slf4j
 @Service
@@ -39,6 +46,7 @@ public class HybridSearchService {
 
     private final EsVectorSearchService vectorSearchService;
     private final EsKeywordSearchService keywordSearchService;
+    private final VectorStore pgVectorStore;
 
     @Value("${app.rag.hybrid.enabled:true}")
     private boolean hybridEnabled;
@@ -61,15 +69,23 @@ public class HybridSearchService {
     /**
      * 混合检索（带用户归属过滤）
      *
+     * 查询优先级：ES 向量检索 → PG 向量检索（ES 空结果或失败时降级）
+     *
      * @param query  用户问题
      * @param userId 用户 ID（null = 只看公共文档）
      * @param topK   最终返回数量
      * @return 融合排序后的 topK 文档（metadata 中含 hybrid_score / vector_rank / bm25_rank）
      */
     public List<Document> searchWithOwnership(String query, String userId, int topK) {
-        // 关闭混合检索 → 直接走纯向量
+        // 关闭混合检索 → 直接走 ES 向量 + PG 降级
         if (!hybridEnabled) {
-            return vectorSearchService.searchWithOwnership(query, userId, topK, similarityThreshold);
+            List<Document> esResults = vectorSearchService.searchWithOwnership(query, userId, topK, similarityThreshold);
+            // ES 空结果或失败时，降级到 PG
+            if (esResults.isEmpty()) {
+                log.info("ES 检索无结果，降级到 PG 向量检索");
+                return searchPgWithOwnership(query, userId, topK, similarityThreshold);
+            }
+            return esResults;
         }
 
         long t0 = System.currentTimeMillis();
@@ -79,7 +95,7 @@ public class HybridSearchService {
             try {
                 return vectorSearchService.searchWithOwnership(query, userId, vectorTopK, similarityThreshold);
             } catch (Exception e) {
-                log.warn("向量检索失败，降级 | err={}", e.getMessage());
+                log.warn("ES 向量检索失败，降级 | err={}", e.getMessage());
                 return List.<Document>of();
             }
         });
@@ -113,6 +129,13 @@ public class HybridSearchService {
         }
 
         long t1 = System.currentTimeMillis();
+
+        // ES 向量召回为空时，尝试 PG 降级
+        if (vectorHits.isEmpty()) {
+            log.info("ES 向量召回为空，尝试 PG 向量降级");
+            vectorHits = searchPgWithOwnership(query, userId, vectorTopK, similarityThreshold);
+        }
+
         List<Document> fused = rrfFuse(vectorHits, keywordHits, topK);
         long t2 = System.currentTimeMillis();
 
@@ -120,6 +143,40 @@ public class HybridSearchService {
                 vectorHits.size(), t1 - t0, keywordHits.size(), fused.size(), t2 - t1, t2 - t0);
 
         return fused;
+    }
+
+    /**
+     * PG 向量检索（带用户归属过滤）
+     *
+     * 过滤逻辑：(doc_scope == PUBLIC) OR (doc_scope == PRIVATE AND user_id == userId)
+     */
+    private List<Document> searchPgWithOwnership(String query, String userId, int topK, double similarityThreshold) {
+        log.debug("PG 向量检索 | query={}, userId={}, topK={}", query, userId, topK);
+
+        var b = new FilterExpressionBuilder();
+
+        Filter.Expression filter;
+        if (userId != null && !userId.isBlank()) {
+            // 公共文档 OR 该用户的私有文档
+            filter = b.or(
+                    b.eq("doc_scope", "PUBLIC"),
+                    b.and(b.eq("doc_scope", "PRIVATE"), b.eq("user_id", userId))
+            ).build();
+        } else {
+            // 未登录：只看公共文档
+            filter = b.eq("doc_scope", "PUBLIC").build();
+        }
+
+        SearchRequest request = SearchRequest.builder()
+                .query(query)
+                .topK(topK)
+                .similarityThreshold(similarityThreshold)
+                .filterExpression(filter)
+                .build();
+
+        List<Document> results = pgVectorStore.similaritySearch(request);
+        log.debug("PG 向量检索完成 | userId={}, 召回 {} 条", userId, results.size());
+        return results;
     }
 
     /**
