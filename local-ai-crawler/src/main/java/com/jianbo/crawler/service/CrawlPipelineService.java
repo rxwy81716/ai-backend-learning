@@ -43,7 +43,7 @@ public class CrawlPipelineService {
     private final BloomFilterService bloomFilterService;
     private final DataCleanService dataCleanService;
     private final HotItemRepository hotItemRepository;
-    private final KnowledgeApiService knowledgeApiService;
+//    private final KnowledgeApiService knowledgeApiService;
     private final TaskLogRepository taskLogRepository;
 
     /** 并发控制信号量（最多同时执行3个爬虫） */

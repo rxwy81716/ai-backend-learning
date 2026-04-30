@@ -1,3 +1,5 @@
 /.idea/
 /local-ai-knowledge-front/node_modules
 /local-ai-knowledge-front/dist
+*.log
+*.log.gz

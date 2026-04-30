@@ -3,7 +3,7 @@ spring:
     # Spring AI 2.x：chat 走 MiniMax；embedding 始终走 Ollama（OllamaApi 在 EmbeddingModelConfig 显式构造）
     model:
       chat: minimax
-      embedding: none
+      embedding: ollama
     minimax:
       api-key: ${MINIMAX_API_KEY:sk-cp-vBXrVb07yCb61nNn73fmjHvvNI_VIEyH-_WVwSmSNdFDX_EkZjfvt15XJwqVndDWJEZzxqCuy6PjzgNWdd3_4EPvGuSE_cD1yXki9zzHsoGybOUqYM8d5Jg}
       chat:
@@ -11,11 +11,6 @@ spring:
           model: MiniMax-M2.7
           temperature: 0.3
           max-tokens: 2048
-    ollama:
-      base-url: http://10.56.60.249:11434
-      embedding:
-        options:
-          model: bge-m3
   datasource:
     driver-class-name: org.postgresql.Driver
     url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge
