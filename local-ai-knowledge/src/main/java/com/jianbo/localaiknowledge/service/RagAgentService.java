@@ -2,6 +2,7 @@ package com.jianbo.localaiknowledge.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jianbo.localaiknowledge.model.ChatMessage;
+import com.jianbo.localaiknowledge.model.SystemPrompt;
 import com.jianbo.localaiknowledge.service.agent.RagToolContext;
 import com.jianbo.localaiknowledge.service.agent.RagTools;
 import com.jianbo.localaiknowledge.utils.ChatContextUtil;
@@ -94,14 +95,18 @@ public class RagAgentService {
               - searchWeb：检索公开互联网（成本最高，谨慎使用）
 
             决策原则：
-              1. 一般性问题先调用 searchKnowledgeBase；只有当返回'知识库暂无相关内容'时，再考虑其它工具
-              2. 涉及'热搜/热榜/今日/排行'等时效性话题，调用 queryHotSearch
-              3. 知识库无结果且非热榜话题，可调用 searchWeb（如已启用）
-              4. 工具返回的每个文档片段开头都有形如【序号】[来源: 具体文件名]的标记。
+              1. 元问题豁免：当用户询问的是"你是谁/你是什么/你能做什么/有哪些功能/当前是什么模式/
+                 在用什么模型"等关于助手自身或系统状态的问题时，禁止调用任何工具，直接基于本提示词
+                 与上下文如实回答。"现在""今日"等词单独出现不构成时效性问题。
+              2. 一般性问题先调用 searchKnowledgeBase；只有当返回'知识库暂无相关内容'时，再考虑其它工具
+              3. 仅当问题中明确出现"热搜/热榜/榜单/排行榜/最热/正在火/最近流行什么"等关键词，
+                 才调用 queryHotSearch；否则即便包含"现在/今日"也不调用此工具
+              4. 知识库无结果且非热榜话题，可调用 searchWeb（如已启用）
+              5. 工具返回的每个文档片段开头都有形如【序号】[来源: 具体文件名]的标记。
                  回答末尾必须用'参考来源：'格式逐条列出实际用到的【来源】完整文件名（多个用逗号分隔），
                  严禁写成'相关文档''背景介绍'等笼统措辞
-              5. 若所有工具都无相关结果，再基于自身常识作答，并明确告知'以下回答基于通用知识，仅供参考'
-              6. 不要编造工具未返回的链接、数据、人名
+              6. 若所有工具都无相关结果，再基于自身常识作答，并明确告知'以下回答基于通用知识，仅供参考'
+              7. 不要编造工具未返回的链接、数据、人名
 
             输出规范（极重要）：
               - 调用工具前后均不要输出任何"我将检索/调用xxx/让我查询"之类的过渡说明
@@ -298,7 +303,13 @@ public class RagAgentService {
   private List<Message> buildMessages(
       String sysPrompt, String sessionId, String question, String currentMode) {
     List<Message> messages = new ArrayList<>();
-    messages.add(new SystemMessage(sysPrompt));
+    // 把当前对话模式作为运行时上下文追加到 system prompt 末尾，
+    // 让模型在回答"当前是什么模式"等元问题时能给出准确答案。
+    String runtimeCtx =
+        MODE_LLM.equals(currentMode)
+            ? "\n\n【运行时上下文】\n- 当前对话模式：LLM 直答模式（已禁用所有工具，仅基于通用知识回答；用户被提示可能存在幻觉）"
+            : "\n\n【运行时上下文】\n- 当前对话模式：知识库模式（KNOWLEDGE，已启用工具调用：searchKnowledgeBase / queryHotSearch / searchWeb，由你自主决策是否调用）";
+    messages.add(new SystemMessage(sysPrompt + runtimeCtx));
     if (sessionId != null) {
       List<ChatMessage> history =
           chatHistoryCache.loadRecentHistory(sessionId, MAX_HISTORY_MESSAGES);
@@ -517,10 +528,18 @@ public class RagAgentService {
 
   private String resolveAgentSystemPrompt(String promptName) {
     // 用户自定义 SystemPrompt（如有）拼接到 Agent 协议之后，避免覆盖工具调用规则
-    if (promptName == null || promptName.isBlank()) {
-      return AGENT_SYSTEM_PROMPT;
+    SystemPrompt prompt = null;
+    if (promptName != null && !promptName.isBlank()) {
+      prompt = systemPromptService.getByName(promptName);
     }
-    var prompt = systemPromptService.getByName(promptName);
+    // 请求未指定具体 prompt 时，回落到管理后台设置的默认智能体；都没有再用内置兜底
+    if (prompt == null) {
+      try {
+        prompt = systemPromptService.getDefault();
+      } catch (Exception e) {
+        log.debug("加载默认 SystemPrompt 失败，使用内置 Agent 提示: {}", e.getMessage());
+      }
+    }
     if (prompt == null || prompt.getContent() == null || prompt.getContent().isBlank()) {
       return AGENT_SYSTEM_PROMPT;
     }
