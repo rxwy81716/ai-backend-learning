@@ -11,7 +11,7 @@ spring:
         # 用 Spring AI 默认 completions-path: /v1/chat/completions
         options:
           # 可选：deepseek-chat (V3) / deepseek-reasoner (R1，会走思考链路)
-#          model: deepseek-chat
-          model: deepseek-v4-pro
+          model: deepseek-chat
+#          model: deepseek-v4-pro
           temperature: 0.3
           max-tokens: 2048
