@@ -85,6 +85,8 @@ export interface ChatRequest {
   sessionId?: string
   promptName?: string
   chatMode?: ChatMode
+  /** 思考模式开关：true=深度推理（慢，回答更好） / false 或省略=快速模式（默认） */
+  thinking?: boolean
 }
 
 export interface ChatResponse {

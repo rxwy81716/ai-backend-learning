@@ -2,10 +2,20 @@ server:
   port: 12116
 spring:
   profiles:
-    active: ${SPRING_PROFILES_ACTIVE:local}
+    # 默认走 glm（智谱 glm-4-flash，永久免费）；切 DeepSeek 用 -Dspring.profiles.active=deepseek
+    active: ${SPRING_PROFILES_ACTIVE:glm}
   application:
     name: local-ai-knowledge
   ai:
+    # 引入 spring-ai-starter-model-openai 后，它的 audio/image/moderation 子自动配置会强制要求
+    # spring.ai.openai.api-key，没设就启动失败。本项目只用 OpenAI 兼容协议跑 embedding（硅基流动），
+    # 其余 OpenAI 子模块全部关掉。chat / embedding 走各 profile 显式配置。
+    model:
+      image: none
+      moderation: none
+      audio:
+        speech: none
+        transcription: none
     vectorstore:
       pgvector:
         index-type: hnsw              # 索引类型：HNSW（推荐）或 IVFFlat
@@ -25,11 +35,8 @@ spring:
         index-name: knowledge_vector_store
         dimensions: 1024
         similarity: cosine
-    ollama:
-      base-url: http://localhost:11434
-      embedding:
-        options:
-          model: bge-m3
+  # chat 配置按 profile 拆分：application-glm.yml / application-deepseek.yml
+  # embedding 始终由 EmbeddingModelConfig 的 @Primary bean 接管（读取下方 app.embedding.* 配置）
   elasticsearch:
     uris: http://localhost:9200  # ES 地址
   servlet:
@@ -44,6 +51,12 @@ spring:
     redis:
       host: localhost
       port: 6379
+  # ==================== 数据库 ====================
+  datasource:
+    url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge
+    username: jianbo
+    password: 525826
+    driver-class-name: org.postgresql.Driver
 app:
   upload:
     dir: ./uploads
@@ -54,11 +67,9 @@ app:
     api-key: ${TAVILY_API_KEY:}      # Tavily API Key（环境变量或直接填）
     max-results: 3
   jwt:
-    # 生产环境必须通过环境变量 JWT_SECRET 配置，未配置则启动失败
-    secret: ${JWT_SECRET:}
-    expiration-hours: 24              # Token 有效期（小时）
-  # 爬虫 API Key（用于 crawler-upload 接口认证）
-  crawler-api-key: ${CRAWLER_API_KEY:}
+    secret: local-dev-jwt-secret-key-at-least-32-chars-do-not-use-in-prod-2026
+    expiration-hours: 24
+  crawler-api-key: local-dev-crawler-api-key-2026
   rate-limit:
     anonymous-max: 20                 # 匿名用户每窗口最大请求数
     window-minutes: 60                # 限流窗口（分钟）
@@ -71,9 +82,16 @@ app:
       rrf-k: 60                       # RRF 平滑常数（论文推荐 60）
       parallel-timeout-ms: 3000       # 双路并发超时
       similarity-threshold: 0.25      # 向量召回最低相似度
+  # Embedding 始终走硅基流动 bge-m3（1024 维，OpenAI 兼容协议）
+  embedding:
+    siliconflow:
+      base-url: https://api.siliconflow.cn
+      api-key: ${SILICONFLOW_API_KEY:sk-ujhxtozyxlazxylbthdtfcgbqgsezzkjcufglnvzzwwruktv}
+      model: BAAI/bge-m3
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
+#    打印sql
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 logging:
   # 自定义 logback 配置位置（放在 resources/logs/ 下，需显式指定）
@@ -83,3 +101,4 @@ logging:
     path: ${LOG_PATH:./logs}
   level:
     org.springframework.ai: INFO
+

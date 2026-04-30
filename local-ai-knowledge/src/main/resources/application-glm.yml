@@ -1,0 +1,18 @@
+# 智谱 BigModel profile —— chat 切到 GLM Flash（永久免费、原生 Tool Calling）
+# 启动：-Dspring.profiles.active=glm   或者直接默认（application.yml 已设默认）
+spring:
+  ai:
+    model:
+      chat: openai
+    openai:
+      base-url: https://open.bigmodel.cn/api/paas
+      api-key: ${ZHIPU_API_KEY:1a17824aecef4bae8487e3d724173de9.om8jBxc8WbuKdU4V}
+      chat:
+        # 智谱 OpenAI 兼容路径是 /v4/chat/completions（非 Spring AI 默认的 /v1/）
+        completions-path: /v4/chat/completions
+        options:
+          # 可选：glm-4-flash（永久免费首选）/ glm-4-flashx / glm-4-air / glm-4-plus
+          # 名称必须是智谱模型库里的精确字符串（全小写、不带版本号小数点）
+          model: glm-4-flash
+          temperature: 0.3
+          max-tokens: 2048

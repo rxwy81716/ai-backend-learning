@@ -160,6 +160,19 @@
             >
               <el-tag type="warning" size="small" class="mode-tip">可能有幻觉</el-tag>
             </el-tooltip>
+            <el-tooltip
+              :content="thinkingMode ? '深度推理：让模型充分思考再回答（30秒+，但答案更稳）' : '快速模式：跳过思考直接回答（5-15秒）'"
+              placement="top"
+            >
+              <el-switch
+                v-model="thinkingMode"
+                size="small"
+                active-text="思考"
+                inactive-text="快速"
+                inline-prompt
+                class="thinking-switch"
+              />
+            </el-tooltip>
           </div>
           <el-input
             v-model="question"
@@ -230,6 +243,15 @@ import {
   Document,
   ArrowDown
 } from '@element-plus/icons-vue'
+import MarkdownIt from 'markdown-it'
+
+// Markdown 渲染器：开启 linkify（自动识别裸链接）+ breaks（单换行也分行，更接近聊天直觉）
+const md = new MarkdownIt({
+  html: false,        // 禁止内嵌 HTML，防 XSS（模型输出不可信）
+  linkify: true,
+  breaks: true,
+  typographer: false
+})
 
 // 移动端默认折叠历史面板
 const isHistoryCollapsed = ref(window.innerWidth <= 768)
@@ -242,6 +264,8 @@ const messageListRef = ref<HTMLElement>()
 const currentAnswer = ref('')
 const lastAnswer = ref('')
 const chatMode = ref<ChatMode>('KNOWLEDGE')
+// 思考模式：默认关闭（快速模式）；开启后让模型先深度推理再回答，速度变慢但答案更稳
+const thinkingMode = ref(false)
 const renameDialogVisible = ref(false)
 const renameTitle = ref('')
 const renameSessionId = ref('')
@@ -355,7 +379,8 @@ const handleSend = async () => {
     {
       question: q,
       sessionId: currentSessionId.value || undefined,
-      chatMode: chatMode.value
+      chatMode: chatMode.value,
+      thinking: thinkingMode.value
     },
     (text) => {
       // 解析 [META]...[/META] 元数据（引用来源、回答类型）
@@ -404,6 +429,17 @@ const handleSend = async () => {
       if (wasNew && sessions.value.length > 0) {
         currentSessionId.value = sessions.value[0].sessionId
       }
+      // 流式结束后从后端拉一次最新历史：拿到 cleanAnswer 处理过的最终版本，
+      // 用整段 Markdown 重渲染替代流式的增量片段，确保排版/列表/标题等完整呈现
+      if (currentSessionId.value) {
+        try {
+          const history = await getHistory(currentSessionId.value)
+          messages.value = history
+          scrollToBottom()
+        } catch (e) {
+          console.warn('刷新历史失败:', e)
+        }
+      }
     }
   )
 }
@@ -427,16 +463,9 @@ const escapeHtml = (text: string) => {
   return text.replace(/[&<>"']/g, (m) => map[m])
 }
 
-// 格式化消息（支持简单的markdown）
-const formatMessage = (content: string) => {
-  // 先转义HTML
-  const escaped = escapeHtml(content)
-  return escaped
-    .replace(/\n/g, '<br>')
-    .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-}
+// 格式化消息：用 markdown-it 渲染完整 Markdown（列表、标题、表格、链接、代码块等全支持）。
+// html: false 已防 XSS；用户消息也走渲染器以保持一致体验（用户输入若含 < 会被自动转义）。
+const formatMessage = (content: string) => md.render(content || '')
 
 // 格式化会话ID
 const formatSessionId = (id: string) => {
@@ -674,6 +703,117 @@ onMounted(() => {
   border-bottom-left-radius: 4px;
 }
 
+/* Markdown 渲染样式：覆盖 markdown-it 默认输出，让聊天气泡内排版紧凑舒适 */
+.message-text :deep(p) {
+  margin: 4px 0;
+}
+
+.message-text :deep(p:first-child) {
+  margin-top: 0;
+}
+
+.message-text :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.message-text :deep(ul),
+.message-text :deep(ol) {
+  margin: 6px 0;
+  padding-left: 24px;
+}
+
+.message-text :deep(li) {
+  margin: 2px 0;
+}
+
+.message-text :deep(h1),
+.message-text :deep(h2),
+.message-text :deep(h3),
+.message-text :deep(h4) {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.message-text :deep(h1) { font-size: 1.3em; }
+.message-text :deep(h2) { font-size: 1.2em; }
+.message-text :deep(h3) { font-size: 1.1em; }
+.message-text :deep(h4) { font-size: 1em; }
+
+.message-text :deep(pre) {
+  background: #f6f8fa;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 8px 0;
+  overflow-x: auto;
+  font-size: 0.9em;
+}
+
+.message-text :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.message-text :deep(code) {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.message-text :deep(blockquote) {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid #dcdfe6;
+  color: #666;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.message-text :deep(table) {
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 0.95em;
+}
+
+.message-text :deep(th),
+.message-text :deep(td) {
+  border: 1px solid #dcdfe6;
+  padding: 6px 10px;
+  text-align: left;
+}
+
+.message-text :deep(th) {
+  background: #fafafa;
+  font-weight: 600;
+}
+
+.message-text :deep(a) {
+  color: #409eff;
+  text-decoration: none;
+}
+
+.message-text :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.message-text :deep(hr) {
+  border: none;
+  border-top: 1px solid #dcdfe6;
+  margin: 12px 0;
+}
+
+/* 用户消息气泡是深蓝底，code/链接需要反色才看得清 */
+.message-item.user .message-text :deep(code) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.message-item.user .message-text :deep(a) {
+  color: #c6e2ff;
+}
+
 .message-meta {
   margin-top: 6px;
   display: flex;
@@ -796,6 +936,11 @@ onMounted(() => {
 
 .mode-tip {
   margin-left: 4px;
+}
+
+/* 思考模式开关：靠右显示，与模式按钮拉开间距 */
+.thinking-switch {
+  margin-left: auto;
 }
 
 .input-actions {

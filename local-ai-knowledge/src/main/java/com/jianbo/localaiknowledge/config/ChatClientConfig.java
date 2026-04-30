@@ -9,8 +9,10 @@ import org.springframework.context.annotation.Configuration;
 /**
  * ChatClient 配置。
  *
- * <p>实际使用哪个 LLM 由 {@code spring.ai.model.chat} 选择器决定（{@code minimax} / {@code ollama} / ...），
- * Spring AI starter 自动只创建对应的 {@link ChatModel}，本类只把它包成 {@link ChatClient}。
+ * <p>chat 走 OpenAI 兼容协议；具体连接哪个云厂商由激活的 profile 决定（见 application-glm.yml /
+ * application-deepseek.yml）。Spring AI 自动配置基于 {@code spring.ai.model.chat=openai} +
+ * {@code spring.ai.openai.*} 创建 {@link org.springframework.ai.openai.OpenAiChatModel}，
+ * 本类只把它包成 {@link ChatClient}。
  */
 @Configuration
 @Slf4j

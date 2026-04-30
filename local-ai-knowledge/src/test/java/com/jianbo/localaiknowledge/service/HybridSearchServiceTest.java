@@ -1,5 +1,6 @@
 package com.jianbo.localaiknowledge.service;
 
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,10 @@ class HybridSearchServiceTest {
 
   @BeforeEach
   void setup() {
+    // 真实的 Caffeine 实例（无 TTL 限制即可，每个用例 query 不重复，不会互相串）
+    // 比 Mockito 的深桩 mock 更稳，且能顺带验证缓存路径的正确性
+    ReflectionTestUtils.setField(
+        hybridSearchService, "ragSearchCache", Caffeine.newBuilder().maximumSize(100).build());
     ReflectionTestUtils.setField(hybridSearchService, "hybridEnabled", true);
     ReflectionTestUtils.setField(hybridSearchService, "vectorTopK", 30);
     ReflectionTestUtils.setField(hybridSearchService, "keywordTopK", 30);

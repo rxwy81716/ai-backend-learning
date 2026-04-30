@@ -1,5 +1,6 @@
 package com.jianbo.localaiknowledge.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -54,6 +55,13 @@ public class HybridSearchService {
   @Qualifier("vectorStore")
   private final VectorStore pgVectorStore;
 
+  /**
+   * RAG 检索结果缓存（CacheConfig#ragSearchCache 提供，TTL 60s）。
+   *
+   * <p>规避本地 bge-m3 单次 2~3s 的 embedding 推理开销，同一会话内重复提问 / 重新生成直接命中。
+   */
+  private final Cache<String, List<Document>> ragSearchCache;
+
   @Value("${app.rag.hybrid.enabled:true}")
   private boolean hybridEnabled;
 
@@ -83,6 +91,32 @@ public class HybridSearchService {
    * @return 融合排序后的 topK 文档（metadata 中含 hybrid_score / vector_rank / bm25_rank）
    */
   public List<Document> searchWithOwnership(String query, String userId, int topK) {
+    // 缓存命中检查：规避 bge-m3 单次 ~2.7s 的 embedding 开销
+    // Key 规范化：trim + 大小写敏感（中文不影响），null userId 占位 "_anon_"
+    String cacheKey = buildCacheKey(query, userId, topK);
+    List<Document> cached = ragSearchCache.getIfPresent(cacheKey);
+    if (cached != null) {
+      log.info("⚡ Hybrid检索缓存命中 | key={}, hit={}条", cacheKey, cached.size());
+      return cached;
+    }
+    // 排障关键：未命中时打印 cacheKey，便于对比是 TTL 过期 还是 LLM 改写了 query
+    log.debug("Hybrid检索缓存未命中 | key={}", cacheKey);
+
+    List<Document> result = doSearchWithOwnership(query, userId, topK);
+    if (!result.isEmpty()) {
+      // 仅缓存非空结果，避免把瞬时空结果（如 ES 抖动）冻结 TTL
+      ragSearchCache.put(cacheKey, result);
+    }
+    return result;
+  }
+
+  private String buildCacheKey(String query, String userId, int topK) {
+    String q = query == null ? "" : query.trim();
+    String u = (userId == null || userId.isBlank()) ? "_anon_" : userId;
+    return u + "|" + topK + "|" + q;
+  }
+
+  private List<Document> doSearchWithOwnership(String query, String userId, int topK) {
     // 关闭混合检索 → 直接走 ES 向量 + PG 降级
     if (!hybridEnabled) {
       List<Document> esResults =

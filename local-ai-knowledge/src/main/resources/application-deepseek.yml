@@ -1,0 +1,17 @@
+# DeepSeek profile —— chat 切到 DeepSeek（质量顶级，付费但月成本不到 1 元）
+# 启动：-Dspring.profiles.active=deepseek
+spring:
+  ai:
+    model:
+      chat: openai
+    openai:
+      base-url: https://api.deepseek.com
+      api-key: ${DEEPSEEK_API_KEY:sk-e40f5abad8894678b9f5746fb292adad}
+      chat:
+        # 用 Spring AI 默认 completions-path: /v1/chat/completions
+        options:
+          # 可选：deepseek-chat (V3) / deepseek-reasoner (R1，会走思考链路)
+#          model: deepseek-chat
+          model: deepseek-v4-pro
+          temperature: 0.3
+          max-tokens: 2048

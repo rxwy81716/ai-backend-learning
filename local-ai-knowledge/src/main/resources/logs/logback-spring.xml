@@ -68,7 +68,11 @@
 
     <!-- 不同 profile 可定制级别；默认 INFO -->
     <springProfile name="local">
-        <root level="DEBUG">
+        <!-- 业务包开 DEBUG 方便排查；根保持 INFO，避免 Redisson / Netty / MyBatis 等三方库刷屏 -->
+        <logger name="com.jianbo" level="DEBUG"/>
+        <logger name="org.redisson" level="INFO"/>
+        <logger name="io.netty" level="INFO"/>
+        <root level="INFO">
             <appender-ref ref="CONSOLE"/>
             <appender-ref ref="ASYNC_FILE"/>
             <appender-ref ref="ASYNC_ERROR_FILE"/>

@@ -53,15 +53,11 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!--        👇 MiniMax 大模型官方 Starter（公司环境用） -->
+        <!-- OpenAI 兼容协议 Starter（chat 通过 profile 切换硅基流动 / 智谱 GLM / DeepSeek）。
+             embedding 由 EmbeddingModelConfig 自定义 @Primary bean 接管（始终走硅基流动）。 -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-minimax</artifactId>
-        </dependency>
-        <!-- Ollama 本地大模型（家里部署 / embedding 始终走它） -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-ollama</artifactId>
+            <artifactId>spring-ai-starter-model-openai</artifactId>
         </dependency>
         <!--        lombok-->
         <dependency>

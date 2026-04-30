@@ -33,7 +33,7 @@ public class EmbeddingService {
     EmbeddingRequest request = new EmbeddingRequest(List.of(text), null);
 
     // 2. 调用 Embedding 模型 API
-    //    底层会发HTTP请求到 MiniMax 服务器
+    //    底层会发HTTP请求到 SiliconFlow 服务器
     //    服务器返回：文本对应的向量数组
     EmbeddingResponse response = embeddingModel.call(request);
 

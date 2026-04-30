@@ -65,8 +65,9 @@ public class RagController {
     String userId = SecurityUtil.getCurrentUserIdStr();
     String promptName = body.get("promptName");
     String chatMode = body.getOrDefault("chatMode", "KNOWLEDGE");
+    boolean thinking = parseThinking(body);
 
-    return ragAgentService.chat(sessionId, question, userId, promptName, chatMode);
+    return ragAgentService.chat(sessionId, question, userId, promptName, chatMode, thinking);
   }
 
   /**
@@ -87,8 +88,17 @@ public class RagController {
     String userId = SecurityUtil.getCurrentUserIdStr();
     String promptName = body.get("promptName");
     String chatMode = body.getOrDefault("chatMode", "KNOWLEDGE");
+    boolean thinking = parseThinking(body);
 
-    return ragAgentService.chatStream(sessionId, question, userId, promptName, chatMode);
+    return ragAgentService.chatStream(
+        sessionId, question, userId, promptName, chatMode, thinking);
+  }
+
+  /** 解析 thinking 开关：默认 false（快速模式）；传 "true" / "1" / "yes" 则启用思考模式。 */
+  private static boolean parseThinking(Map<String, String> body) {
+    String v = body.get("thinking");
+    if (v == null) return false;
+    return "true".equalsIgnoreCase(v) || "1".equals(v) || "yes".equalsIgnoreCase(v);
   }
 
   // ==================== 会话管理 ====================

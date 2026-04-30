@@ -142,32 +142,49 @@ export function requestStream(
       
       const decoder = new TextDecoder()
       const readerRef = reader
-      
+
+      // 解析单个 SSE 事件块：抽取所有 data: 行，按规范用 \n 连接；忽略注释与其它字段
+      const parseEvent = (raw: string): string | null => {
+        const lines = raw.split(/\r?\n/)
+        const dataLines: string[] = []
+        for (const line of lines) {
+          if (!line || line.startsWith(':')) continue
+          if (line.startsWith('data:')) {
+            // 规范允许 "data: xxx" 或 "data:xxx"，去掉前缀和单个前导空格
+            const v = line.slice(5)
+            dataLines.push(v.startsWith(' ') ? v.slice(1) : v)
+          }
+        }
+        if (dataLines.length === 0) return null
+        return dataLines.join('\n')
+      }
+
       function read() {
         readerRef.read().then(({ done, value }) => {
           if (done) {
-            if (buffer) {
-              onMessage(buffer)
+            // 处理收尾残留
+            const tail = buffer + decoder.decode()
+            if (tail.trim()) {
+              const data = parseEvent(tail)
+              if (data && data !== '[DONE]') onMessage(data)
             }
             onComplete?.()
             return
           }
-          
+
           buffer += decoder.decode(value, { stream: true })
-          
-          // 按行处理，处理 SSE 格式
-          let text = buffer.trim()
-          // 过滤掉所有 SSE data: 前缀（处理重复的 data:）
-          text = text.replace(/^data:\s*/gm, '')
-          // 移除 [DONE] 标记
-          text = text.replace(/\[DONE\]/g, '')
-          text = text.trim()
-          
-          if (text) {
-            onMessage(text)
+
+          // 按 SSE 帧分隔（空行）切分；最后一段可能不完整，留到下次
+          const parts = buffer.split(/\r?\n\r?\n/)
+          buffer = parts.pop() ?? ''
+
+          for (const part of parts) {
+            const data = parseEvent(part)
+            if (data === null) continue
+            if (data === '[DONE]') continue
+            onMessage(data)
           }
-          buffer = ''
-          
+
           read()
         })
       }

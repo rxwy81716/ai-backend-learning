@@ -22,6 +22,7 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 
 /**
  * RAG Agent（基于 Spring AI Tool Calling）
@@ -64,6 +65,23 @@ public class RagAgentService {
   private static final int LLM_TIMEOUT_SECONDS = 60;
   private static final int LLM_MAX_RETRIES = 2;
 
+  /** chatMode 取值：知识库（默认，启用 Tool Calling） / LLM（直答，禁用所有工具） */
+  private static final String MODE_KNOWLEDGE = "KNOWLEDGE";
+
+  private static final String MODE_LLM = "LLM";
+
+  /** 消息 metadata 中存储 chatMode 的 key（用于历史隔离） */
+  private static final String META_KEY_MODE = "chatMode";
+
+  /** 去除 qwen3 等推理型模型输出中的 <think>...</think> 块 */
+  private static final Pattern THINK_BLOCK = Pattern.compile("<think>.*?</think>", Pattern.DOTALL);
+
+  /** 合并 3+ 连续换行为 2 个，保留段落间隔但避免过多空行 */
+  private static final Pattern MULTI_NEWLINE = Pattern.compile("\\n{3,}");
+
+  /** 快速模式开头指令：告知 qwen3 等模型跳过 thinking 阶段 */
+  private static final String NO_THINK_PREFIX = "/no_think\n";
+
   /**
    * Agent 模式系统提示：告诉 LLM 它有哪些工具、决策原则。工具描述由 {@link RagTools} 上的 {@code @Tool} 注解自动注入到 LLM 的
    * function schema，这里只补充"何时该用工具 / 如何引用来源"等高层指令。
@@ -79,31 +97,48 @@ public class RagAgentService {
               1. 一般性问题先调用 searchKnowledgeBase；只有当返回'知识库暂无相关内容'时，再考虑其它工具
               2. 涉及'热搜/热榜/今日/排行'等时效性话题，调用 queryHotSearch
               3. 知识库无结果且非热榜话题，可调用 searchWeb（如已启用）
-              4. 工具返回的内容里【来源】是真实可引用的，请在回答末尾用'参考来源：xxx'方式列出
+              4. 工具返回的每个文档片段开头都有形如【序号】[来源: 具体文件名]的标记。
+                 回答末尾必须用'参考来源：'格式逐条列出实际用到的【来源】完整文件名（多个用逗号分隔），
+                 严禁写成'相关文档''背景介绍'等笼统措辞
               5. 若所有工具都无相关结果，再基于自身常识作答，并明确告知'以下回答基于通用知识，仅供参考'
               6. 不要编造工具未返回的链接、数据、人名
+
+            输出规范（极重要）：
+              - 调用工具前后均不要输出任何"我将检索/调用xxx/让我查询"之类的过渡说明
+              - 直接给出最终回答；如需调用工具就静默调用，调用完毕直接基于结果作答
+              - 禁止输出 <think>、<tool_call> 等任何标签或 JSON 形式的内部状态
             """;
 
   /** LLM 直答 Prompt（chatMode=LLM 时使用，跳过所有工具） */
   private static final String LLM_DIRECT_PROMPT =
-      "你是一个智能问答助手。请基于你自身的知识尽可能准确地回答用户问题。\n"
-          + "注意：\n"
-          + "- 如果你不确定，请明确告知用户\"以下回答基于通用知识，仅供参考\"\n"
-          + "- 不要编造具体数据、链接或不存在的来源";
+      """
+            你是一个智能问答助手。请基于你自身的知识尽可能准确地回答用户问题。
+            注意：
+              - 如果你不确定，请明确告知用户"以下回答基于通用知识，仅供参考"
+              - 不要编造具体数据、链接或不存在的来源
+              - 直接给出最终回答，不要输出"让我想想/我将分析"之类的过渡说明
+            """;
 
   // ========================================================================
   // 同步问答
   // ========================================================================
 
   public Map<String, Object> chat(
-      String sessionId, String question, String userId, String promptName, String chatMode) {
+      String sessionId,
+      String question,
+      String userId,
+      String promptName,
+      String chatMode,
+      boolean thinking) {
     long t0 = System.currentTimeMillis();
-    boolean toolsDisabled = "LLM".equalsIgnoreCase(chatMode);
+    String mode = normalizeMode(chatMode);
+    boolean toolsDisabled = MODE_LLM.equals(mode);
 
-    // 准备 system prompt
-    String sysPrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
+    // 准备 system prompt：快速模式加 /no_think，思考模式不加
+    String basePrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
+    String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
 
-    List<Message> messages = buildMessages(sysPrompt, sessionId, question);
+    List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
 
     // 调用 LLM：RagToolContext 通过 ToolContext map 显式传入，跨线程安全
     final RagToolContext ctx = RagToolContext.create(userId);
@@ -111,6 +146,7 @@ public class RagAgentService {
     Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
     List<Document> retrievedDocs = new ArrayList<>(ctx.getRetrievedDocs());
 
+    answer = cleanAnswer(answer);
     long total = System.currentTimeMillis() - t0;
     String source = decideSource(invoked, toolsDisabled);
     log.info(
@@ -122,8 +158,10 @@ public class RagAgentService {
 
     // 持久化
     if (sessionId != null) {
-      chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, null, userId));
+      String userMeta = toJson(Map.of(META_KEY_MODE, mode));
+      chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, userMeta, userId));
       Map<String, Object> metaMap = new LinkedHashMap<>();
+      metaMap.put(META_KEY_MODE, mode);
       metaMap.put("source", source);
       metaMap.put("invokedTools", invoked);
       metaMap.put("hitCount", retrievedDocs.size());
@@ -158,13 +196,21 @@ public class RagAgentService {
   // ========================================================================
 
   public Flux<String> chatStream(
-      String sessionId, String question, String userId, String promptName, String chatMode) {
-    boolean toolsDisabled = "LLM".equalsIgnoreCase(chatMode);
-    String sysPrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
-    List<Message> messages = buildMessages(sysPrompt, sessionId, question);
+      String sessionId,
+      String question,
+      String userId,
+      String promptName,
+      String chatMode,
+      boolean thinking) {
+    String mode = normalizeMode(chatMode);
+    boolean toolsDisabled = MODE_LLM.equals(mode);
+    String basePrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
+    String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
+    List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
 
     if (sessionId != null) {
-      chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, null, userId));
+      String userMeta = toJson(Map.of(META_KEY_MODE, mode));
+      chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, userMeta, userId));
     }
 
     StringBuilder fullAnswer = new StringBuilder();
@@ -178,9 +224,18 @@ public class RagAgentService {
     }
 
     final String sid = sessionId;
+    final String finalMode = mode;
+    // 状态机：跨 chunk 跟踪 <think>...</think> 边界，实时丢弃思考块与首部空白
+    final ThinkBlockStripper stripper = new ThinkBlockStripper();
     return spec.stream()
         .content()
         .timeout(Duration.ofSeconds(LLM_TIMEOUT_SECONDS))
+        .map(stripper::process)
+        .concatWith(Flux.defer(() -> {
+          String tail = stripper.flush();
+          return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
+        }))
+        .filter(s -> !s.isEmpty())
         .doOnNext(fullAnswer::append)
         .concatWith(
             Flux.defer(
@@ -216,6 +271,7 @@ public class RagAgentService {
                 List<Document> docs = ctx.getRetrievedDocs();
                 String source = decideSource(invoked, toolsDisabled);
                 Map<String, Object> metaMap = new LinkedHashMap<>();
+                metaMap.put(META_KEY_MODE, finalMode);
                 metaMap.put("source", source);
                 metaMap.put("invokedTools", invoked);
                 metaMap.put("hitCount", docs.size());
@@ -225,7 +281,8 @@ public class RagAgentService {
                 String meta = toJson(metaMap);
                 try {
                   chatHistoryCache.saveMessage(
-                      ChatMessage.of(sid, "assistant", fullAnswer.toString(), meta, userId));
+                      ChatMessage.of(
+                          sid, "assistant", cleanAnswer(fullAnswer.toString()), meta, userId));
                 } catch (Exception persistErr) {
                   log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
                 }
@@ -238,13 +295,17 @@ public class RagAgentService {
   // 内部工具方法
   // ========================================================================
 
-  private List<Message> buildMessages(String sysPrompt, String sessionId, String question) {
+  private List<Message> buildMessages(
+      String sysPrompt, String sessionId, String question, String currentMode) {
     List<Message> messages = new ArrayList<>();
     messages.add(new SystemMessage(sysPrompt));
     if (sessionId != null) {
       List<ChatMessage> history =
           chatHistoryCache.loadRecentHistory(sessionId, MAX_HISTORY_MESSAGES);
       for (ChatMessage msg : history) {
+        // 仅加载与当前 chatMode 相同的历史，避免 LLM 直答与知识库模式互相污染上下文。
+        // 历史遗留消息（meta 缺失 chatMode）一律跳过，确保切换模式后行为干净可预期。
+        if (!isSameMode(msg, currentMode)) continue;
         switch (msg.getRole()) {
           case "user" -> messages.add(new UserMessage(msg.getContent()));
           case "assistant" -> messages.add(new AssistantMessage(msg.getContent()));
@@ -254,6 +315,135 @@ public class RagAgentService {
     messages.add(new UserMessage(question));
     chatContextUtil.trimByToken(messages);
     return messages;
+  }
+
+  private static String normalizeMode(String chatMode) {
+    return MODE_LLM.equalsIgnoreCase(chatMode) ? MODE_LLM : MODE_KNOWLEDGE;
+  }
+
+  /**
+   * 清洗 LLM 输出：
+   *
+   * <ul>
+   *   <li>去除 {@code <think>...</think>} 推理块（qwen3 等模型即使 /no_think 也可能残留空块）
+   *   <li>将 3+ 连续换行压缩为 2，保留段落感但避免刷屏
+   *   <li>trim 首尾空白
+   * </ul>
+   */
+  private static String cleanAnswer(String raw) {
+    if (raw == null || raw.isEmpty()) return "";
+    String s = THINK_BLOCK.matcher(raw).replaceAll("");
+    s = MULTI_NEWLINE.matcher(s).replaceAll("\n\n");
+    return s.trim();
+  }
+
+  /**
+   * 流式 <think>...</think> 过滤器（状态机）。
+   *
+   * <p>跨 chunk 边界保留部分标签前缀，避免“{@code <thi}”这样的不完整标签被当作普通文本带出。
+   * 同时在首个非空字符出现前 trim掉开头的空白/换行，防止前端 Markdown 馈送上头的乱换行。
+   */
+  private static final class ThinkBlockStripper {
+    private static final String OPEN = "<think>";
+    private static final String CLOSE = "</think>";
+
+    private boolean inThink = false;
+    private boolean emittedNonBlank = false;
+    private final StringBuilder buffer = new StringBuilder();
+
+    String process(String chunk) {
+      if (chunk == null || chunk.isEmpty()) return "";
+      buffer.append(chunk);
+      StringBuilder out = new StringBuilder();
+      while (true) {
+        if (!inThink) {
+          int idx = buffer.indexOf(OPEN);
+          if (idx >= 0) {
+            out.append(buffer, 0, idx);
+            buffer.delete(0, idx + OPEN.length());
+            inThink = true;
+            continue;
+          }
+          int safe = trailingSafeLen(buffer, OPEN);
+          out.append(buffer, 0, safe);
+          buffer.delete(0, safe);
+          break;
+        } else {
+          int idx = buffer.indexOf(CLOSE);
+          if (idx >= 0) {
+            buffer.delete(0, idx + CLOSE.length());
+            inThink = false;
+            continue;
+          }
+          int keepFrom = buffer.length() - partialSuffixLen(buffer, CLOSE);
+          buffer.delete(0, keepFrom);
+          break;
+        }
+      }
+      return trimLeadingIfNeeded(out.toString());
+    }
+
+    /** 流结束时冲出残余 buffer（仅当不在 think 块内）。 */
+    String flush() {
+      if (inThink) {
+        buffer.setLength(0);
+        return "";
+      }
+      String s = buffer.toString();
+      buffer.setLength(0);
+      return trimLeadingIfNeeded(s);
+    }
+
+    /** 返回 buf 中不会与 tag 前缀冲突的安全长度（即可以放心输出的前缀长）。 */
+    private static int trailingSafeLen(StringBuilder buf, String tag) {
+      int max = Math.min(tag.length() - 1, buf.length());
+      for (int i = max; i > 0; i--) {
+        if (regionMatches(buf, buf.length() - i, tag, 0, i)) {
+          return buf.length() - i;
+        }
+      }
+      return buf.length();
+    }
+
+    /** 返回 buf 末尾与 tag 前缀匹配的最长长度（需保留）。 */
+    private static int partialSuffixLen(StringBuilder buf, String tag) {
+      int max = Math.min(tag.length() - 1, buf.length());
+      for (int i = max; i > 0; i--) {
+        if (regionMatches(buf, buf.length() - i, tag, 0, i)) return i;
+      }
+      return 0;
+    }
+
+    private static boolean regionMatches(StringBuilder buf, int off, String s, int sOff, int len) {
+      for (int i = 0; i < len; i++) {
+        if (buf.charAt(off + i) != s.charAt(sOff + i)) return false;
+      }
+      return true;
+    }
+
+    private String trimLeadingIfNeeded(String s) {
+      if (emittedNonBlank || s.isEmpty()) {
+        if (!s.isEmpty()) emittedNonBlank = true;
+        return s;
+      }
+      int i = 0;
+      while (i < s.length() && Character.isWhitespace(s.charAt(i))) i++;
+      String r = s.substring(i);
+      if (!r.isEmpty()) emittedNonBlank = true;
+      return r;
+    }
+  }
+
+  private boolean isSameMode(ChatMessage msg, String currentMode) {
+    String meta = msg.getMetadata();
+    if (meta == null || meta.isBlank()) return false;
+    try {
+      Map<?, ?> map = objectMapper.readValue(meta, Map.class);
+      Object stored = map.get(META_KEY_MODE);
+      return stored != null && currentMode.equalsIgnoreCase(stored.toString());
+    } catch (Exception e) {
+      return false;
+    }
   }
 
   /**
