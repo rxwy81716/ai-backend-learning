@@ -56,9 +56,10 @@ public class HybridSearchService {
   private final VectorStore pgVectorStore;
 
   /**
-   * RAG 检索结果缓存（CacheConfig#ragSearchCache 提供，TTL 60s）。
+   * RAG 检索结果缓存（CacheConfig#ragSearchCache 提供，TTL 10min）。
    *
-   * <p>规避本地 bge-m3 单次 2~3s 的 embedding 推理开销，同一会话内重复提问 / 重新生成直接命中。
+   * <p>规避 bge-m3 单次 ~2.7s 的 embedding 推理开销；新文档入库 / 删除时 {@code DocumentParseService}
+   * 会主动 {@code invalidateAll()}，因此不会出现"刚上传的文档检索不到"。
    */
   private final Cache<String, List<Document>> ragSearchCache;
 
@@ -179,10 +180,23 @@ public class HybridSearchService {
 
     long t1 = System.currentTimeMillis();
 
+    // 两路同时为空：通常意味着 ES 集群不可用 / 索引缺失，不仅是单纯"无命中"，
+    // 升级为 WARN 方便运维快速感知（INFO 容易淹没在普通日志里）。
+    boolean bothEmpty = vectorHits.isEmpty() && keywordHits.isEmpty();
+    if (bothEmpty) {
+      log.warn(
+          "⚠ Hybrid 两路检索均为空，疑似 ES 异常 / 索引缺失 / 数据未入库 | query={}, userId={}",
+          query,
+          userId);
+    }
+
     // ES 向量召回为空时，尝试 PG 降级
     if (vectorHits.isEmpty()) {
       log.info("ES 向量召回为空，尝试 PG 向量降级");
       vectorHits = searchPgWithOwnership(query, userId, vectorTopK, similarityThreshold);
+      if (bothEmpty && vectorHits.isEmpty()) {
+        log.warn("⚠ PG 向量降级亦无结果，两路检索全空 | query={}", query);
+      }
     }
 
     List<Document> fused = rrfFuse(vectorHits, keywordHits, topK);

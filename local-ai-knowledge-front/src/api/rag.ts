@@ -1,14 +1,9 @@
 import request from '@/utils/request'
-import type { ChatRequest, ChatResponse, SystemPrompt, ChatMessage, Session } from '@/types'
+import type { ChatRequest, SystemPrompt, ChatMessage, Session } from '@/types'
 
 // ==================== 智能问答（自动路由 知识库 → 网络搜索 → LLM直答） ====================
 
-// 智能问答（同步）
-export function chat(data: ChatRequest) {
-  return request.post<any, ChatResponse>('/api/rag/chat', data)
-}
-
-// 智能问答（SSE流式）
+// 智能问答（SSE 流式）—— 后端唯一对外入口
 export function chatStream(data: ChatRequest) {
   return request.post<any, any>('/api/rag/chat/stream', data)
 }

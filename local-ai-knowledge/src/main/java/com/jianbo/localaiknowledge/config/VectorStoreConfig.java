@@ -1,5 +1,8 @@
 package com.jianbo.localaiknowledge.config;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.json.jackson.JacksonJsonpMapper;
+import co.elastic.clients.transport.rest5_client.Rest5ClientTransport;
 import co.elastic.clients.transport.rest5_client.low_level.Request;
 import co.elastic.clients.transport.rest5_client.low_level.Response;
 import co.elastic.clients.transport.rest5_client.low_level.Rest5Client;
@@ -134,5 +137,17 @@ public class VectorStoreConfig {
       httpHosts[i] = new HttpHost(uri.getScheme(), uri.getHost(), uri.getPort());
     }
     return Rest5Client.builder(httpHosts).build();
+  }
+
+  /**
+   * 高级类型安全客户端（ES Java API Client，DSL 风格 builder + 编译期校验）。
+   *
+   * <p>与 {@link #elasticsearchRestClient} 共享同一份底层 HTTP 连接池，
+   * 服务层（如 {@code EsKeywordSearchService}）优先用它替代手拼 JSON。
+   */
+  @Bean
+  public ElasticsearchClient elasticsearchClient(Rest5Client restClient) {
+    return new ElasticsearchClient(
+        new Rest5ClientTransport(restClient, new JacksonJsonpMapper()));
   }
 }

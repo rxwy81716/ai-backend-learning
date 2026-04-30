@@ -34,6 +34,11 @@ export function deleteDocument(taskId: string) {
   return request.delete<any, { message: string }>(`/api/doc/${taskId}`)
 }
 
+// 重新解析文档
+export function reparseDocument(taskId: string) {
+  return request.post<any, { message: string; taskId: string }>(`/api/doc/reparse/${taskId}`)
+}
+
 // 获取文档下载URL
 export function getDownloadUrl(taskId: string) {
   const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:12116'

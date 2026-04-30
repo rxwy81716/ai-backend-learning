@@ -229,6 +229,24 @@ public class DocumentController {
     return Map.of("message", "删除成功");
   }
 
+  /** 重新解析文档（清除旧数据，重新读取 + 切片 + 入库） */
+  @PostMapping("/reparse/{taskId}")
+  public Map<String, Object> reparse(@PathVariable String taskId) {
+    DocumentTask task = documentParseService.getTask(taskId);
+    if (task == null) {
+      throw new IllegalArgumentException("任务不存在");
+    }
+    // 权限校验：只能重新解析自己的文档，管理员可操作所有
+    String userId = SecurityUtil.getCurrentUserIdStr();
+    if (!SecurityUtil.isAdmin()) {
+      if (userId == null || !userId.equals(task.getUserId())) {
+        throw new IllegalArgumentException("无权操作他人的文档");
+      }
+    }
+    documentParseService.reparseTask(taskId);
+    return Map.of("message", "重新解析已触发", "taskId", taskId);
+  }
+
   /** 下载文档 */
   @GetMapping("/download/{taskId}")
   public ResponseEntity<Resource> download(@PathVariable String taskId) throws IOException {

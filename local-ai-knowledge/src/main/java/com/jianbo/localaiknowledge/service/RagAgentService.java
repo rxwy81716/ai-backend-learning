@@ -15,6 +15,9 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 
@@ -61,7 +64,6 @@ public class RagAgentService {
   private final ChatClient chatClient;
 
   private static final int MAX_HISTORY_MESSAGES = 20;
-  private static final int LLM_MAX_RETRIES = 2;
 
   /** 流式首字节超时：LLM 长时间不开口（>15s）通常意味着上游卡死。 */
   private static final int STREAM_FIRST_BYTE_TIMEOUT_SECONDS = 15;
@@ -147,7 +149,9 @@ public class RagAgentService {
               1. 元问题豁免：当用户询问的是"你是谁/你是什么/你能做什么/有哪些功能/当前是什么模式/
                  在用什么模型"等关于助手自身或系统状态的问题时，禁止调用任何工具，直接基于本提示词
                  与上下文如实回答。"现在""今日"等词单独出现不构成时效性问题。
-              2. 一般性问题先调用 searchKnowledgeBase；只有当返回'知识库暂无相关内容'时，再考虑其它工具
+              2. 除元问题外的所有问题，必须先调用 searchKnowledgeBase，禁止跳过。
+                 即使你认为自己已经知道答案，也必须先检索知识库——用户上传的文档内容
+                 优先级高于你的训练数据。只有当工具返回'知识库暂无相关内容'时，才考虑其它工具或自身知识
               3. 仅当问题中明确出现"热搜/热榜/榜单/排行榜/最热/正在火/最近流行什么"等关键词，
                  才调用 queryHotSearch；否则即便包含"现在/今日"也不调用此工具
               4. 知识库无结果且非热榜话题，可调用 searchWeb（如已启用）
@@ -196,79 +200,7 @@ public class RagAgentService {
             """;
 
   // ========================================================================
-  // 同步问答
-  // ========================================================================
-
-  public Map<String, Object> chat(
-      String sessionId,
-      String question,
-      String userId,
-      String promptName,
-      String chatMode,
-      boolean thinking) {
-    long t0 = System.currentTimeMillis();
-    String mode = normalizeMode(chatMode);
-    boolean toolsDisabled = MODE_LLM.equals(mode);
-
-    // 准备 system prompt：快速模式加 /no_think，思考模式不加
-    String basePrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
-    String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
-
-    List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
-
-    // 调用 LLM：RagToolContext 通过 ToolContext map 显式传入，跨线程安全
-    final RagToolContext ctx = RagToolContext.create(userId);
-    String answer = callLlmWithProtection(messages, !toolsDisabled, ctx);
-    Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
-    List<Document> retrievedDocs = new ArrayList<>(ctx.getRetrievedDocs());
-
-    answer = cleanAnswer(answer);
-    long total = System.currentTimeMillis() - t0;
-    String source = decideSource(invoked, toolsDisabled);
-    log.info(
-        "⏱ Agent chat 总耗时 {}ms | source={}, invokedTools={}, hitDocs={}",
-        total,
-        source,
-        invoked,
-        retrievedDocs.size());
-
-    // 持久化
-    if (sessionId != null) {
-      String userMeta = toJson(Map.of(META_KEY_MODE, mode));
-      chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, userMeta, userId));
-      Map<String, Object> metaMap = new LinkedHashMap<>();
-      metaMap.put(META_KEY_MODE, mode);
-      metaMap.put("source", source);
-      metaMap.put("invokedTools", invoked);
-      metaMap.put("hitCount", retrievedDocs.size());
-      if (!retrievedDocs.isEmpty()) {
-        metaMap.put("references", buildReferences(retrievedDocs));
-      }
-      String meta = toJson(metaMap);
-      chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "assistant", answer, meta, userId));
-    }
-
-    // 构建响应
-    Map<String, Object> result = new LinkedHashMap<>();
-    result.put("answer", answer);
-    result.put("source", source);
-    result.put("invokedTools", invoked);
-    result.put("hitCount", retrievedDocs.size());
-    if (sessionId != null) {
-      result.put("sessionId", sessionId);
-    }
-    if ("llm_direct".equals(source)) {
-      result.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
-    }
-    if (!retrievedDocs.isEmpty()) {
-      result.put("references", buildReferences(retrievedDocs));
-    }
-    result.put("costMs", total);
-    return result;
-  }
-
-  // ========================================================================
-  // 流式问答
+  // 流式问答（前端唯一入口）
   // ========================================================================
 
   public Flux<String> chatStream(
@@ -301,6 +233,8 @@ public class RagAgentService {
 
     final String sid = sessionId;
     final String finalMode = mode;
+    // 流级错误状态：onErrorResume 写入，doFinally 持久化时读取，避免兜底文本被当作正常回答。
+    final String[] errorCodeHolder = new String[1];
     // 状态机：跨 chunk 跟踪 <think>...</think> 边界，实时丢弃思考块与首部空白
     final ThinkBlockStripper stripper = new ThinkBlockStripper();
     return spec.stream()
@@ -339,27 +273,37 @@ public class RagAgentService {
                   if ("llm_direct".equals(source)) {
                     meta.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
                   }
+                  if (errorCodeHolder[0] != null) {
+                    meta.put("error", true);
+                    meta.put("errorCode", errorCodeHolder[0]);
+                  }
                   return Flux.just("[META]" + toJson(meta) + "[/META]");
                 }))
         .onErrorResume(
             e -> {
-              log.error("Agent 流式异常: {}", e.getMessage(), e);
-              String fallback;
-              if (e instanceof java.util.concurrent.TimeoutException) {
-                // 区分首字节 / idle 超时，给用户更明确的反馈
-                fallback =
-                    fullAnswer.length() == 0
-                        ? "抱歉，AI 服务响应超时（首字节 "
-                            + STREAM_FIRST_BYTE_TIMEOUT_SECONDS
-                            + "s 未到），请稍后重试。"
-                        : "\n\n_[流式中断：连续 "
-                            + STREAM_IDLE_TIMEOUT_SECONDS
-                            + "s 未收到新内容]_";
-              } else {
-                fallback = "抱歉，AI 服务暂时不可用，请稍后重试。";
-              }
+              boolean firstByteReceived = !fullAnswer.isEmpty();
+              String code = classifyStreamError(e, firstByteReceived);
+              errorCodeHolder[0] = code;
+              log.error(
+                  "Agent 流式异常 | session={}, code={}, firstByte={}, err={}",
+                  sid,
+                  code,
+                  firstByteReceived,
+                  e.toString());
+              String fallback = renderStreamErrorMessage(code, firstByteReceived);
               fullAnswer.append(fallback);
-              return Flux.just(fallback);
+              // 兜底文本仍要发给前端展示；此处也带上 [META]，确保前端拿到 errorCode
+              Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
+              List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
+              String src = decideSource(invoked, toolsDisabled);
+              Map<String, Object> meta = new LinkedHashMap<>();
+              meta.put("source", src);
+              meta.put("invokedTools", invoked);
+              meta.put("hitCount", docs.size());
+              meta.put("error", true);
+              meta.put("errorCode", code);
+              if (!docs.isEmpty()) meta.put("references", buildReferences(docs));
+              return Flux.just(fallback, "[META]" + toJson(meta) + "[/META]");
             })
         // 客户端断开时（前端点"停止"或网络中断）记录日志，便于排查和监控浪费的 token 量
         .doOnCancel(() -> log.info("流式被客户端取消 | session={}", sid))
@@ -368,31 +312,40 @@ public class RagAgentService {
         // 避免会话历史"用户问完没回答"的断裂。被取消时给已生成内容加 [已中断] 标记。
         .doFinally(
             sig -> {
-              if (sid != null && fullAnswer.length() > 0) {
-                Set<String> invoked = ctx.getInvokedTools();
-                List<Document> docs = ctx.getRetrievedDocs();
-                String source = decideSource(invoked, toolsDisabled);
-                boolean cancelled = sig == reactor.core.publisher.SignalType.CANCEL;
-                Map<String, Object> metaMap = new LinkedHashMap<>();
-                metaMap.put(META_KEY_MODE, finalMode);
-                metaMap.put("source", source);
-                metaMap.put("invokedTools", invoked);
-                metaMap.put("hitCount", docs.size());
-                if (cancelled) metaMap.put("cancelled", true);
-                if (!docs.isEmpty()) {
-                  metaMap.put("references", buildReferences(docs));
-                }
-                String meta = toJson(metaMap);
-                String content = cleanAnswer(fullAnswer.toString());
-                if (cancelled && !content.isEmpty()) {
-                  content = content + "\n\n_[已中断]_";
-                }
-                try {
-                  chatHistoryCache.saveMessage(
-                      ChatMessage.of(sid, "assistant", content, meta, userId));
-                } catch (Exception persistErr) {
-                  log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
-                }
+              if (sid == null) return;
+              String content = cleanAnswer(fullAnswer.toString());
+              boolean cancelled = sig == reactor.core.publisher.SignalType.CANCEL;
+              boolean failed = errorCodeHolder[0] != null;
+              // 内容空白且非异常 / 非取消（即模型只输出 think 被剥光）：跳过保存，避免空 assistant 污染上下文
+              if (content.isBlank() && !cancelled && !failed) {
+                log.info("流式产出为空（可能仅 think 块），跳过持久化 | session={}", sid);
+                return;
+              }
+              Set<String> invoked = ctx.getInvokedTools();
+              List<Document> docs = ctx.getRetrievedDocs();
+              String source = decideSource(invoked, toolsDisabled);
+              Map<String, Object> metaMap = new LinkedHashMap<>();
+              metaMap.put(META_KEY_MODE, finalMode);
+              metaMap.put("source", source);
+              metaMap.put("invokedTools", invoked);
+              metaMap.put("hitCount", docs.size());
+              if (cancelled) metaMap.put("cancelled", true);
+              if (failed) {
+                metaMap.put("error", true);
+                metaMap.put("errorCode", errorCodeHolder[0]);
+              }
+              if (!docs.isEmpty()) {
+                metaMap.put("references", buildReferences(docs));
+              }
+              String meta = toJson(metaMap);
+              if (cancelled && !content.isEmpty()) {
+                content = content + "\n\n_[已中断]_";
+              }
+              try {
+                chatHistoryCache.saveMessage(
+                    ChatMessage.of(sid, "assistant", content, meta, userId));
+              } catch (Exception persistErr) {
+                log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
               }
             })
         .subscribeOn(Schedulers.boundedElastic());
@@ -553,121 +506,81 @@ public class RagAgentService {
     }
   }
 
-  private boolean isSameMode(ChatMessage msg, String currentMode) {
-    String meta = msg.getMetadata();
-    if (meta == null || meta.isBlank()) return false;
-    try {
-      Map<?, ?> map = objectMapper.readValue(meta, Map.class);
-      Object stored = map.get(META_KEY_MODE);
-      return stored != null && currentMode.equalsIgnoreCase(stored.toString());
-    } catch (Exception e) {
-      return false;
-    }
-  }
-
   /**
-   * 同步 LLM 调用 + 工具注入 + 超时 + 重试 + 友好兑底。
+   * 当前 chatMode 是否应纳入此条历史。
    *
-   * <p>{@code ctx} 通过 {@link org.springframework.ai.chat.model.ToolContext} 显式传入工具方法。
+   * <p>规则：
+   * <ul>
+   *   <li>metadata 中明确写了 chatMode：精确匹配
+   *   <li>缺失 metadata / 解析失败 / 缺 chatMode 字段：视为 KNOWLEDGE（老消息兼容，避免升级后历史失忆）
+   * </ul>
    */
-  private String callLlmWithProtection(
-      List<Message> messages, boolean enableTools, RagToolContext ctx) {
-    Exception lastException = null;
-
-    // 直接同步调用：底层 HTTP 客户端（Ollama/OpenAI/DashScope）已配置 readTimeout，
-    // 不再需要 CompletableFuture.supplyAsync + future.get(timeout) 这层包装：
-    //   1) supplyAsync 会占用 ForkJoinPool.commonPool 线程，线程不释放（spec.call() 阻塞中），仅是把阻塞挪了个位置；
-    //   2) future.get 超时只是放弃等待，HTTP 请求并不会真正取消，照样烧 token；
-    // 因此交给 HTTP 客户端层兜底超时更准确，这里只做 try/catch 重试。
-    for (int attempt = 1; attempt <= LLM_MAX_RETRIES; attempt++) {
+  private boolean isSameMode(ChatMessage msg, String currentMode) {
+    String stored = MODE_KNOWLEDGE; // 默认按知识库模式兜底（与之前默认 mode 一致）
+    String meta = msg.getMetadata();
+    if (meta != null && !meta.isBlank()) {
       try {
-        return invokeChatClient(messages, enableTools, ctx);
-      } catch (Exception e) {
-        Throwable cause = unwrap(e);
-        lastException = e;
-        if (!isRetryable(cause)) {
-          log.warn(
-              "LLM 调用不可重试异常，立即返回 | attempt={}/{}, error={}",
-              attempt,
-              LLM_MAX_RETRIES,
-              cause.getMessage());
-          break;
-        }
-        log.warn(
-            "LLM 调用可重试异常 | attempt={}/{}, error={}",
-            attempt,
-            LLM_MAX_RETRIES,
-            cause.getMessage());
+        Map<?, ?> map = objectMapper.readValue(meta, Map.class);
+        Object v = map.get(META_KEY_MODE);
+        if (v != null) stored = v.toString();
+      } catch (Exception ignore) {
+        // 解析失败按 KNOWLEDGE 兜底
       }
     }
-    log.error(
-        "LLM 调用全部失败 | retries={}, lastError={}",
-        LLM_MAX_RETRIES,
-        lastException != null ? lastException.getMessage() : "unknown");
-    return "抱歉，AI 服务暂时不可用，请稍后重试。";
-  }
-
-  /** 解开 CompletableFuture/ExecutionException 等包装层，得到真正的业务异常。 */
-  private Throwable unwrap(Throwable e) {
-    Throwable cur = e;
-    while (cur instanceof java.util.concurrent.ExecutionException
-        || cur instanceof java.util.concurrent.CompletionException) {
-      Throwable next = cur.getCause();
-      if (next == null || next == cur) break;
-      cur = next;
-    }
-    return cur;
+    return currentMode.equalsIgnoreCase(stored);
   }
 
   /**
-   * 判断异常是否值得重试。
+   * 流式异常分类（基于 Spring Web 异常类型而非正则匹配 message，准确无误判）。
    *
-   * <p>可重试：超时、网络 IO、5xx；不可重试：4xx（参数错/触发审核/配额耗尽）、参数非法等业务错。
+   * <p>返回值：
+   * <ul>
+   *   <li>{@code timeout_first_byte} / {@code timeout_idle}：上游 LLM 卡死
+   *   <li>{@code rate_limit}：429（被限流，建议稍后再试）
+   *   <li>{@code auth}：401/403（API Key 失效）
+   *   <li>{@code content_policy}：触发审核
+   *   <li>{@code client_error}：其它 4xx（请求参数问题）
+   *   <li>{@code server_error}：5xx（服务端故障）
+   *   <li>{@code network}：连接拒绝 / 重置 等 IO
+   *   <li>{@code unknown}：其它
+   * </ul>
    */
-  private boolean isRetryable(Throwable cause) {
-    if (cause == null) return false;
-    if (cause instanceof TimeoutException) return true;
-    if (cause instanceof java.io.IOException) return true;
-    if (cause instanceof IllegalArgumentException) return false;
-
-    String msg = cause.getMessage() == null ? "" : cause.getMessage().toLowerCase();
-    // 内容审核 / 安全过滤类，不重试
-    if (msg.contains("filter")
-        || msg.contains("content_policy")
-        || msg.contains("safety")
-        || msg.contains("moderation")) {
-      return false;
+  private static String classifyStreamError(Throwable e, boolean firstByteReceived) {
+    if (e instanceof TimeoutException) {
+      return firstByteReceived ? "timeout_idle" : "timeout_first_byte";
     }
-    // 4xx：客户端错误，不重试
-    if (msg.matches(".*\\b4\\d{2}\\b.*")
-        || msg.contains("bad request")
-        || msg.contains("unauthorized")
-        || msg.contains("forbidden")
-        || msg.contains("not found")
-        || msg.contains("invalid")
-        || msg.contains("quota")
-        || msg.contains("insufficient")) {
-      return false;
+    if (e instanceof HttpClientErrorException ce) {
+      int code = ce.getStatusCode().value();
+      if (code == 429) return "rate_limit";
+      if (code == 401 || code == 403) return "auth";
+      String body = ce.getResponseBodyAsString().toLowerCase();
+      if (body.contains("content_filter") || body.contains("safety") || body.contains("moderation")) {
+        return "content_policy";
+      }
+      return "client_error";
     }
-    // 5xx / 连接被拒 / 重置 等：可重试
-    if (msg.matches(".*\\b5\\d{2}\\b.*")
-        || msg.contains("timeout")
-        || msg.contains("timed out")
-        || msg.contains("connection")
-        || msg.contains("reset")
-        || msg.contains("unavailable")) {
-      return true;
-    }
-    // 默认保守：未知异常不重试，避免白烧 token
-    return false;
+    if (e instanceof HttpServerErrorException) return "server_error";
+    if (e instanceof ResourceAccessException || e instanceof java.io.IOException) return "network";
+    return "unknown";
   }
 
-  private String invokeChatClient(List<Message> messages, boolean enableTools, RagToolContext ctx) {
-    ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
-    if (enableTools) {
-      spec = spec.tools(ragTools).toolContext(Map.of(RagTools.CTX_KEY, ctx));
-    }
-    return spec.call().content();
+  /** 把分类结果转成给用户看的兜底文案。 */
+  private static String renderStreamErrorMessage(String code, boolean firstByteReceived) {
+    return switch (code) {
+      case "timeout_first_byte" ->
+          "抱歉，AI 服务响应超时（首字节 " + STREAM_FIRST_BYTE_TIMEOUT_SECONDS + "s 未到），请稍后重试。";
+      case "timeout_idle" ->
+          "\n\n_[流式中断：连续 " + STREAM_IDLE_TIMEOUT_SECONDS + "s 未收到新内容]_";
+      case "rate_limit" -> "请求过于频繁，请稍后再试。";
+      case "auth" -> "AI 服务认证失败，请联系管理员检查 API Key 配置。";
+      case "content_policy" -> "抱歉，您的问题或上下文触发了内容安全策略，无法回答。";
+      case "client_error" -> "抱歉，请求被服务端拒绝（参数或配额问题），请稍后重试。";
+      case "server_error", "network", "unknown" ->
+          firstByteReceived
+              ? "\n\n_[AI 服务连接异常，回答已中断]_"
+              : "抱歉，AI 服务暂时不可用，请稍后重试。";
+      default -> "抱歉，AI 服务暂时不可用，请稍后重试。";
+    };
   }
 
   /** 根据工具调用记录推断响应来源标识。 优先级：knowledge_base > hot_search > web_search > llm_direct */

@@ -50,33 +50,11 @@ public class RagController {
   // ==================== 智能问答 ====================
 
   /**
-   * 智能问答（同步）。
+   * 智能问答（SSE 流式）。注意：SSE 流不被统一响应包装。
    *
    * <p>请求体字段：{@code question} / {@code sessionId?} / {@code promptName?} /
    * {@code chatMode?}（KNOWLEDGE=知识库模式默认 / LLM=LLM直答） / {@code thinking?}。
-   */
-  @PostMapping("/chat")
-  public Map<String, Object> chat(@RequestBody Map<String, String> body) {
-    String question = sanitizeQuestion(body.get("question"));
-    String userId = SecurityUtil.getCurrentUserIdStr();
-    String sessionId = body.get("sessionId");
-    if (sessionId == null || sessionId.isBlank()) {
-      sessionId = UUID.randomUUID().toString().replace("-", "");
-    } else {
-      // 用户传入既有 sessionId 时校验归属，防止越权读他人对话并续写
-      assertSessionOwnedByCurrentUser(sessionId, userId);
-    }
-    String promptName = body.get("promptName");
-    String chatMode = normalizeChatMode(body.get("chatMode"));
-    boolean thinking = parseThinking(body);
-
-    return ragAgentService.chat(sessionId, question, userId, promptName, chatMode, thinking);
-  }
-
-  /**
-   * 智能问答（SSE 流式）。注意：SSE 流不被统一响应包装。
-   *
-   * <p>请求体字段同 {@link #chat(Map)}；以 {@code text/event-stream} 形式返回 token 流，
+   * 以 {@code text/event-stream} 形式返回 token 流，
    * 末尾追加 {@code [META]...[/META]} 段，前端可解析出来源、引用等元数据。
    */
   @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -145,7 +123,7 @@ public class RagController {
 
   // ==================== 会话管理 ====================
 
-  /** 获取用户所有会话列表（一次聚合查询，无 N+1） */
+  /** 获取用户所有会话列表（一次聚合查询 + 一次批量取标题，无 N+1） */
   @GetMapping("/sessions")
   public List<ChatSession> sessions() {
     String userId = SecurityUtil.getCurrentUserIdStr();
@@ -155,11 +133,22 @@ public class RagController {
     List<ChatSession> list = conversationMapper.selectSessionListByUserId(userId);
     if (list.isEmpty()) return list;
 
+    // 一次 HMGET 拉所有自定义标题，避免 N 次 Redis round trip
     RMap<String, String> titleMap = redissonClient.getMap(SESSION_TITLE_KEY);
+    java.util.Set<String> ids = new java.util.HashSet<>(list.size());
+    for (ChatSession s : list) ids.add(s.getSessionId());
+    Map<String, String> customTitles;
+    try {
+      customTitles = titleMap.getAll(ids);
+    } catch (Exception e) {
+      log.warn("批量取会话标题失败，回退默认 | err={}", e.getMessage());
+      customTitles = java.util.Collections.emptyMap();
+    }
+
     long now = System.currentTimeMillis();
     for (ChatSession s : list) {
       // 标题：用户自定义优先，否则截首条问题
-      String customTitle = titleMap.get(s.getSessionId());
+      String customTitle = customTitles.get(s.getSessionId());
       if (customTitle != null && !customTitle.isBlank()) {
         s.setTitle(customTitle);
       } else {

@@ -1,5 +1,6 @@
 package com.jianbo.localaiknowledge.service;
 
+import com.github.benmanes.caffeine.cache.Cache;
 import com.jianbo.localaiknowledge.mapper.DocumentChunkMapper;
 import com.jianbo.localaiknowledge.mapper.DocumentTaskLogMapper;
 import com.jianbo.localaiknowledge.mapper.DocumentTaskMapper;
@@ -11,24 +12,32 @@ import org.redisson.api.RBlockingQueue;
 import org.redisson.api.RedissonClient;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.tika.TikaDocumentReader;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
  * 文档解析服务
  *
- * <p>流程：文件上传 → 本地保存 → 投递 Redisson 队列 → 消费者异步解析 → 双写入库（ES + PG） - ES：向量检索（优先查询） - PG：document_chunk
- * 存分段原文 + vector_store 存向量（备份） 任务状态持久化到 PostgreSQL（document_task 表）
+ * <p>流程：文件上传 → 本地保存 → 投递 Redisson 队列 → 消费者异步解析 → 入库
+ * <ul>
+ *   <li>ES：向量检索（主力，分批 + 429 自适应退避）
+ *   <li>PG document_chunk：原文切片存档
+ * </ul>
+ * <p>任务状态持久化到 PostgreSQL（document_task 表）。
+ * <p>ES 丢失时可通过“重新解析”从磁盘原文件重建。
  */
 @Service
 @Slf4j
@@ -42,7 +51,8 @@ public class DocumentParseService {
   private final DocumentChunkMapper chunkMapper;
   private final RedissonClient redissonClient;
   private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
-  private final VectorStore pgVectorStore;
+  /** RAG 检索结果缓存（入库/删除后主动清除，避免 10min 内新文档检索不到） */
+  private final Cache<String, java.util.List<Document>> ragSearchCache;
 
   public DocumentParseService(
       EsVectorStoreService esVectorStoreService,
@@ -51,14 +61,14 @@ public class DocumentParseService {
       DocumentChunkMapper chunkMapper,
       RedissonClient redissonClient,
       org.springframework.jdbc.core.JdbcTemplate jdbcTemplate,
-      @Qualifier("vectorStore") VectorStore pgVectorStore) {
+      Cache<String, java.util.List<Document>> ragSearchCache) {
     this.esVectorStoreService = esVectorStoreService;
     this.taskMapper = taskMapper;
     this.taskLogMapper = taskLogMapper;
     this.chunkMapper = chunkMapper;
     this.redissonClient = redissonClient;
     this.jdbcTemplate = jdbcTemplate;
-    this.pgVectorStore = pgVectorStore;
+    this.ragSearchCache = ragSearchCache;
   }
 
   /** 注册一个新任务（持久化到 DB） */
@@ -114,6 +124,64 @@ public class DocumentParseService {
     return chunkMapper.selectByTaskId(taskId);
   }
 
+  /**
+   * 重新解析文档：清除旧的向量/切片数据，重置状态，重新投递队列。
+   * 前提：本地文件仍存在；否则抛异常。
+   */
+  public void reparseTask(String taskId) {
+    DocumentTask task = taskMapper.selectByTaskId(taskId);
+    if (task == null) {
+      throw new IllegalArgumentException("任务不存在");
+    }
+    // 校验任务不在处理中（防重复提交）
+    if (task.getStatus() == TaskStatus.PARSING || task.getStatus() == TaskStatus.IMPORTING) {
+      throw new IllegalStateException("文档正在处理中，请等待完成后再重新解析");
+    }
+    // 校验本地文件仍在
+    if (!Files.exists(Paths.get(task.getFilePath()))) {
+      throw new IllegalStateException("源文件已不存在，无法重新解析: " + task.getFilePath());
+    }
+
+    // 清除旧的 ES 向量数据
+    try {
+      esVectorStoreService.deleteBySource(task.getFileName(), task.getUserId());
+    } catch (Exception e) {
+      log.warn("[{}] 重新解析-ES向量清除失败（可能尚未入库）: {}", taskId, e.getMessage());
+    }
+    // 清除旧的 PG document_chunk
+    try {
+      int deleted = chunkMapper.deleteByTaskId(taskId);
+      log.info("[{}] 重新解析-PG document_chunk 已清除 {} 条", taskId, deleted);
+    } catch (Exception e) {
+      log.warn("[{}] 重新解析-PG document_chunk 清除失败: {}", taskId, e.getMessage());
+    }
+    // 清除旧的 PG vector_store
+    try {
+      deletePgVectorBySource(task.getFileName());
+    } catch (Exception e) {
+      log.warn("[{}] 重新解析-PG vector_store 清除失败: {}", taskId, e.getMessage());
+    }
+    // 清空 RAG 缓存
+    try {
+      ragSearchCache.invalidateAll();
+    } catch (Exception ignore) {
+    }
+
+    // 重置任务状态
+    task.setStatus(TaskStatus.UPLOADED);
+    task.setErrorMsg(null);
+    task.setTotalChunks(0);
+    task.setImportedChunks(0);
+    task.setFinishedAt(null);
+    taskMapper.update(task);
+
+    taskLogMapper.insert(taskId, "REPARSE", "用户触发重新解析: " + task.getFileName());
+    log.info("[{}] 重新解析已触发: {}", taskId, task.getFileName());
+
+    // 重新投递队列
+    submitToQueue(taskId);
+  }
+
   /** 删除文档任务（DB记录 + 本地文件 + ES向量 + PG数据） */
   public void deleteTask(String taskId) {
     DocumentTask task = taskMapper.selectByTaskId(taskId);
@@ -155,6 +223,13 @@ public class DocumentParseService {
     taskMapper.deleteByTaskId(taskId);
     taskLogMapper.insert(taskId, "DELETED", "文档已删除: " + task.getFileName());
     log.info("[{}] 文档任务已删除: {}", taskId, task.getFileName());
+
+    // 删除也要清缓存，避免返回已不存在的文档片段
+    try {
+      ragSearchCache.invalidateAll();
+    } catch (Exception ignore) {
+      // 缓存不可用不阻断删除主流程
+    }
   }
 
   /** 查询任务操作日志 */
@@ -165,12 +240,10 @@ public class DocumentParseService {
   /**
    * 执行解析并入库（由队列消费者调用）。
    *
-   * <p>双写策略：ES 向量 + PG（document_chunk 原文 + vector_store 向量）。
+   * <p>入库策略：ES 向量（检索主力）+ PG document_chunk（原文存档）。
    *
-   * <p>说明：原本声明的 {@code @Transactional} 实际不生效——异常被外层 try-catch 吞没且事务里夹杂着 ES 这种非事务参与方，
-   * 反而误导阅读者；移除后改为各阶段独立 try-catch + 任务状态机兜底，更如实反映运行行为。
-   *
-   * <p>切片只做一次，结果在 ES / PG_chunk / PG_vector 三处复用，避免重复 CPU。
+   * <p>切片只做一次，结果在 ES 和 PG_chunk 两处复用，避免重复 CPU。
+   * ES 分批入库（429 自适应退避），并通过进度回调实时更新 importedChunks。
    */
   public void parseAndImport(String taskId) {
     DocumentTask task = taskMapper.selectByTaskId(taskId);
@@ -185,29 +258,37 @@ public class DocumentParseService {
       taskLogMapper.insert(taskId, "PARSE_START", "开始解析文档: " + task.getFileName());
       log.info("[{}] 开始解析文档: {}", taskId, task.getFileName());
 
-      FileSystemResource resource = new FileSystemResource(task.getFilePath());
-      TikaDocumentReader reader = new TikaDocumentReader(resource);
-      List<Document> tikaDocuments = reader.get();
+      String rawText;
+      String fileNameLower = task.getFileName().toLowerCase();
+      if (fileNameLower.endsWith(".txt")) {
+        // .txt 文件绕过 Tika，直接读取并自动检测编码（Tika 对 GBK/GB18030 中文 txt 编码检测不可靠）
+        rawText = readPlainTextFile(Paths.get(task.getFilePath()));
+        log.info("[{}] 纯文本直接读取完成, 编码自动检测, 提取 {} 字符", taskId, rawText.length());
+      } else {
+        // 非 txt 文件走 Tika（PDF / Word / HTML 等）
+        FileSystemResource resource = new FileSystemResource(task.getFilePath());
+        TikaDocumentReader reader = new TikaDocumentReader(resource);
+        List<Document> tikaDocuments = reader.get();
 
-      // 将 Tika 解析出的多段内容合并成完整文本
-      StringBuilder fullText = new StringBuilder();
-      for (Document doc : tikaDocuments) {
-        fullText.append(doc.getText()).append("\n");
+        StringBuilder fullText = new StringBuilder();
+        for (Document doc : tikaDocuments) {
+          fullText.append(doc.getText()).append("\n");
+        }
+        rawText = fullText.toString().trim();
       }
-
-      String rawText = fullText.toString().trim();
       if (rawText.isEmpty()) {
         failTask(task, "文档解析结果为空，请检查文件内容");
         log.warn("[{}] 文档解析结果为空: {}", taskId, task.getFileName());
         return;
       }
 
-      taskLogMapper.insert(taskId, "PARSE_DONE", "Tika 解析完成, 提取文本 " + rawText.length() + " 字符");
-      log.info("[{}] Tika 解析完成, 提取文本 {} 字符", taskId, rawText.length());
+      String parseMethod = fileNameLower.endsWith(".txt") ? "纯文本直读" : "Tika";
+      taskLogMapper.insert(taskId, "PARSE_DONE", parseMethod + " 解析完成, 提取文本 " + rawText.length() + " 字符");
+      log.info("[{}] {} 解析完成, 提取文本 {} 字符", taskId, parseMethod, rawText.length());
 
       // ===== 阶段2: 切片（仅 1 次）=====
       updateStatus(task, TaskStatus.IMPORTING);
-      taskLogMapper.insert(taskId, "IMPORT_START", "开始切片+双写入库（ES + PG）");
+      taskLogMapper.insert(taskId, "IMPORT_START", "开始切片+入库（ES向量 + PG原文）");
 
       String clean = com.jianbo.localaiknowledge.utils.TextCleanUtil.clean(rawText);
       List<String> chunks = com.jianbo.localaiknowledge.utils.TextSplitterUtil.splitText(clean);
@@ -216,16 +297,25 @@ public class DocumentParseService {
       String userId = task.getUserId();
       String docScope = task.getDocScope();
 
-      // ===== 阶段3: 三路并入库（共享同一份 chunks 切片）=====
-      // 3.1 ES 向量入库（检索优先）
-      int esCount =
-          esVectorStoreService.importChunks(chunks, source, userId, docScope);
+      // 切片完成后立即写入 totalChunks，前端轮询可看到总数
+      task.setTotalChunks(chunks.size());
+      task.setImportedChunks(0);
+      taskMapper.update(task);
 
-      // 3.2 PG document_chunk 原文存档
+      // ===== 阶段3: 入库（ES 向量 + PG 原文存档）=====
+      // 3.1 ES 向量入库（检索主力），带进度回调实时更新 importedChunks
+      //     每 500 chunks 更新一次 DB，避免长任务频繁写库
+      final int totalChunks = chunks.size();
+      int esCount = esVectorStoreService.importChunks(chunks, source, userId, docScope,
+          imported -> {
+            if (imported >= totalChunks || imported % 500 == 0) {
+              task.setImportedChunks(imported);
+              taskMapper.update(task);
+            }
+          });
+
+      // 3.2 PG document_chunk 原文存档（不涉及 embedding，速度很快）
       saveChunksToPg(taskId, chunks, source, userId, docScope);
-
-      // 3.3 PG vector_store 双写（备份）
-      saveVectorToPg(chunks, source, userId, docScope);
 
       task.setTotalChunks(esCount);
       task.setImportedChunks(esCount);
@@ -233,9 +323,18 @@ public class DocumentParseService {
       task.setFinishedAt(LocalDateTime.now());
       taskMapper.update(task);
 
-      taskLogMapper.insert(taskId, "IMPORT_DONE", "双写入库完成, 共 " + esCount + " 个切片（ES+PG）");
-      log.info("[{}] 双写入库完成, 共 {} 个切片, 来源: {}", taskId, esCount, source);
+      taskLogMapper.insert(taskId, "IMPORT_DONE", "入库完成, 共 " + esCount + " 个切片（ES + PG原文）");
+      log.info("[{}] 入库完成, 共 {} 个切片, 来源: {}", taskId, esCount, source);
 
+      // 新文档入库后清空 RAG 检索缓存，保证下一次提问能够实时够检索到。
+      // 主要代价：后续 10min 内原本能命中缓存的重复问题会重走 embedding（~2.7s），
+      // 但避免了“刚传的文档检索不到”这种错误领域问题。
+      try {
+        ragSearchCache.invalidateAll();
+        log.info("[{}] RAG 检索缓存已清空（新文档入库）", taskId);
+      } catch (Exception cacheErr) {
+        log.warn("[{}] RAG 检索缓存清理失败: {}", taskId, cacheErr.getMessage());
+      }
     } catch (Exception e) {
       failTask(task, e.getMessage());
       log.error("[{}] 文档处理失败: {}", taskId, e.getMessage(), e);
@@ -265,31 +364,6 @@ public class DocumentParseService {
     }
   }
 
-  /** 向量双写到 PG vector_store */
-  private void saveVectorToPg(
-      List<String> chunks, String source, String userId, String docScope) {
-    try {
-      List<Document> documents = new ArrayList<>(chunks.size());
-      for (int i = 0; i < chunks.size(); i++) {
-        Map<String, Object> metadata = new HashMap<>();
-        metadata.put("source", source);
-        metadata.put("chunk_index", String.valueOf(i));
-        metadata.put("total_chunks", String.valueOf(chunks.size()));
-        metadata.put("doc_scope", docScope != null ? docScope : "PUBLIC");
-        if (userId != null) {
-          metadata.put("user_id", userId);
-        }
-        documents.add(new Document(chunks.get(i), metadata));
-      }
-
-      pgVectorStore.add(documents);
-      log.info("PG vector_store 入库 {} 条, 来源: {}", documents.size(), source);
-    } catch (Exception e) {
-      log.error("PG vector_store 入库失败, 来源: {}, error: {}", source, e.getMessage(), e);
-      // 不中断主流程，ES 已成功入库
-    }
-  }
-
   /** 按 source 删除 PG vector_store 中的向量数据 PgVectorStore 的 metadata 是 JSONB 格式，通过 SQL 删除 */
   private void deletePgVectorBySource(String source) {
     try {
@@ -315,5 +389,51 @@ public class DocumentParseService {
     task.setFinishedAt(LocalDateTime.now());
     taskMapper.update(task);
     taskLogMapper.insert(task.getTaskId(), "FAILED", errorMsg);
+  }
+
+  /**
+   * 读取纯文本文件（自动检测编码）。
+   *
+   * <p>尝试顺序：UTF-8（带 BOM 检测）→ GB18030（GBK/GB2312 超集）→ 系统默认。
+   * 对中文网络小说 .txt 文件（通常 GBK/GB18030）比 Tika 可靠得多。
+   */
+  private String readPlainTextFile(Path filePath) throws java.io.IOException {
+    byte[] bytes = Files.readAllBytes(filePath);
+
+    // UTF-8 BOM (EF BB BF) → 直接 UTF-8
+    if (bytes.length >= 3 && (bytes[0] & 0xFF) == 0xEF && (bytes[1] & 0xFF) == 0xBB && (bytes[2] & 0xFF) == 0xBF) {
+      log.info("检测到 UTF-8 BOM, 使用 UTF-8 解码");
+      return new String(bytes, 3, bytes.length - 3, StandardCharsets.UTF_8).trim();
+    }
+
+    // 尝试严格 UTF-8 解码（REPORT 模式：遇到非法字节立即抛异常）
+    try {
+      CharsetDecoder utf8Decoder = StandardCharsets.UTF_8.newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT);
+      String text = utf8Decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString().trim();
+      if (!text.isEmpty()) {
+        log.info("UTF-8 严格解码成功, 文本长度 {} 字符", text.length());
+        return text;
+      }
+    } catch (CharacterCodingException e) {
+      log.info("UTF-8 严格解码失败, 尝试 GB18030");
+    }
+
+    // 回退到 GB18030（GBK / GB2312 超集，几乎覆盖所有中文 txt 编码）
+    Charset gb18030 = Charset.forName("GB18030");
+    try {
+      CharsetDecoder gbDecoder = gb18030.newDecoder()
+          .onMalformedInput(CodingErrorAction.REPORT)
+          .onUnmappableCharacter(CodingErrorAction.REPORT);
+      String text = gbDecoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString().trim();
+      log.info("GB18030 解码成功, 文本长度 {} 字符", text.length());
+      return text;
+    } catch (CharacterCodingException e) {
+      log.warn("GB18030 严格解码也失败, 使用 GB18030 宽松模式兜底");
+    }
+
+    // 最终兜底：GB18030 宽松模式（替换非法字符而非拒绝）
+    return new String(bytes, gb18030).trim();
   }
 }

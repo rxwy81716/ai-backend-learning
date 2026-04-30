@@ -39,8 +39,9 @@ public class CacheConfig {
    *
    * <p>Key: query + userId + topK 拼成的字符串；Value: 融合后的 Document 列表。
    *
-   * <p>TTL 10 分钟：覆盖一整次对话过程中用户多轮反复追问同一问题的场景。新文档上传后最多延迟 10 分钟可见，
-   * 学习/Demo 场景完全可接受；如需立刻可见可调用清缓存接口或重启。
+   * <p>TTL 10 分钟，主要规避 bge-m3 单次 ~2.7s 的 embedding 推理；新文档入库 / 删除时
+   * {@code DocumentParseService} 会主动 {@code invalidateAll()}，因此不会出现
+   * "刚上传的文档检索不到" 的情况。
    */
   @Bean
   public Cache<String, List<Document>> ragSearchCache() {

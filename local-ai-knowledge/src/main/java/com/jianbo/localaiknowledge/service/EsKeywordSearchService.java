@@ -1,12 +1,13 @@
 package com.jianbo.localaiknowledge.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
+import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
+import co.elastic.clients.elasticsearch.core.SearchResponse;
+import co.elastic.clients.elasticsearch.core.search.Hit;
+import co.elastic.clients.elasticsearch.core.search.SourceFilter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import co.elastic.clients.transport.rest5_client.low_level.Request;
-import co.elastic.clients.transport.rest5_client.low_level.Response;
-import co.elastic.clients.transport.rest5_client.low_level.Rest5Client;
 import org.springframework.ai.document.Document;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -27,7 +28,11 @@ import java.util.Map;
  *   <li>BM25 关键词：擅长精确词命中（专有名词、英文术语、版本号等）
  * </ul>
  *
- * <p>对 Spring AI ElasticsearchVectorStore 的索引结构做 BM25 检索：
+ * <p>查询使用 ES Java API Client 的类型安全 DSL（编译期校验字段名 / 操作符），
+ * 而非手拼 JSON；底层共享 {@link co.elastic.clients.transport.rest5_client.low_level.Rest5Client}
+ * 连接池，无额外开销。
+ *
+ * <p>对应索引结构（与 Spring AI {@code ElasticsearchVectorStore} 一致）：
  *
  * <pre>
  * {
@@ -45,8 +50,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class EsKeywordSearchService {
 
-  private final Rest5Client restClient;
-  private final ObjectMapper objectMapper;
+  private final ElasticsearchClient esClient;
 
   @Value("${spring.ai.vectorstore.elasticsearch.index-name:knowledge_vector_store}")
   private String indexName;
@@ -59,27 +63,37 @@ public class EsKeywordSearchService {
    * @param topK 召回数
    * @return Spring AI Document 列表（带 BM25 score 写入 metadata.bm25_score）
    */
+  @SuppressWarnings({"rawtypes", "unchecked"})
   public List<Document> searchWithOwnership(String query, String userId, int topK) {
     try {
-      String body = buildQueryBody(query, userId, topK);
-      Request request = new Request("POST", "/" + indexName + "/_search");
-      request.setJsonEntity(body);
+      Query matchContent =
+          Query.of(q -> q.match(m -> m.field("content").query(query).operator(Operator.Or)));
+      Query ownership = buildOwnershipQuery(userId);
 
-      Response response = restClient.performRequest(request);
-      JsonNode root = objectMapper.readTree(response.getEntity().getContent());
-      JsonNode hits = root.path("hits").path("hits");
+      // _source 只取 content + metadata，减小网络开销
+      SourceFilter sourceFilter =
+          SourceFilter.of(s -> s.includes("content", "metadata"));
+
+      SearchResponse<Map> response =
+          esClient.search(
+              s ->
+                  s.index(indexName)
+                      .size(topK)
+                      .source(src -> src.filter(sourceFilter))
+                      .query(
+                          q ->
+                              q.bool(
+                                  b -> b.must(matchContent).filter(ownership))),
+              Map.class);
 
       List<Document> results = new ArrayList<>();
-      for (JsonNode hit : hits) {
-        String id = hit.path("_id").asText();
-        double score = hit.path("_score").asDouble();
-        JsonNode src = hit.path("_source");
-
-        String content = src.path("content").asText("");
-        Map<String, Object> metadata = parseMetadata(src.path("metadata"));
-        metadata.put("bm25_score", score);
-
-        results.add(new Document(id, content, metadata));
+      for (Hit<Map> hit : response.hits().hits()) {
+        Map source = hit.source();
+        if (source == null) continue;
+        String content = String.valueOf(source.getOrDefault("content", ""));
+        Map<String, Object> metadata = normalizeMetadata((Map<?, ?>) source.get("metadata"));
+        if (hit.score() != null) metadata.put("bm25_score", hit.score());
+        results.add(new Document(hit.id(), content, metadata));
       }
       log.debug("BM25 检索完成 | query={}, userId={}, hits={}", query, userId, results.size());
       return results;
@@ -89,62 +103,36 @@ public class EsKeywordSearchService {
     }
   }
 
-  /**
-   * 构造 ES Query DSL： - must: match content - filter: doc_scope == PUBLIC OR (doc_scope == PRIVATE
-   * AND user_id == userId)
-   */
-  private String buildQueryBody(String query, String userId, int topK) throws IOException {
-    Map<String, Object> matchContent =
-        Map.of("match", Map.of("content", Map.of("query", query, "operator", "or")));
-
-    // 用户归属过滤（与向量路径保持一致）
-    Map<String, Object> ownershipFilter;
-    if (userId != null && !userId.isBlank()) {
-      ownershipFilter =
-          Map.of(
-              "bool",
-              Map.of(
-                  "should",
-                  List.of(
-                      Map.of("term", Map.of("metadata.doc_scope.keyword", "PUBLIC")),
-                      Map.of(
-                          "bool",
-                          Map.of(
-                              "must",
-                              List.of(
-                                  Map.of("term", Map.of("metadata.doc_scope.keyword", "PRIVATE")),
-                                  Map.of("term", Map.of("metadata.user_id.keyword", userId)))))),
-                  "minimum_should_match",
-                  1));
-    } else {
-      ownershipFilter = Map.of("term", Map.of("metadata.doc_scope.keyword", "PUBLIC"));
+  /** 用户归属过滤：PUBLIC OR (PRIVATE AND user_id == userId)。 */
+  private Query buildOwnershipQuery(String userId) {
+    if (userId == null || userId.isBlank()) {
+      return Query.of(q -> q.term(t -> t.field("metadata.doc_scope").value("PUBLIC")));
     }
-
-    Map<String, Object> bool =
-        Map.of(
-            "must", List.of(matchContent),
-            "filter", List.of(ownershipFilter));
-
-    Map<String, Object> body = new HashMap<>();
-    body.put("size", topK);
-    body.put("query", Map.of("bool", bool));
-    // 仅返回需要的字段，减小网络开销
-    body.put("_source", List.of("content", "metadata"));
-
-    return objectMapper.writeValueAsString(body);
+    Query publicDocs =
+        Query.of(q -> q.term(t -> t.field("metadata.doc_scope").value("PUBLIC")));
+    Query myPrivateDocs =
+        Query.of(
+            q ->
+                q.bool(
+                    b ->
+                        b.must(
+                                m ->
+                                    m.term(
+                                        t ->
+                                            t.field("metadata.doc_scope").value("PRIVATE")))
+                            .must(
+                                m ->
+                                    m.term(
+                                        t -> t.field("metadata.user_id").value(userId)))));
+    return Query.of(q -> q.bool(b -> b.should(publicDocs).should(myPrivateDocs).minimumShouldMatch("1")));
   }
 
-  private Map<String, Object> parseMetadata(JsonNode metaNode) {
+  /** 把 _source.metadata 节点扁平拷成 Spring AI Document.metadata 接受的 Map<String,Object>。 */
+  private Map<String, Object> normalizeMetadata(Map<?, ?> metaNode) {
     Map<String, Object> result = new HashMap<>();
-    if (metaNode == null || metaNode.isMissingNode() || metaNode.isNull()) {
-      return result;
-    }
-    for (Map.Entry<String, JsonNode> entry : metaNode.properties()) {
-      JsonNode v = entry.getValue();
-      if (v.isTextual()) result.put(entry.getKey(), v.asText());
-      else if (v.isNumber()) result.put(entry.getKey(), v.numberValue());
-      else if (v.isBoolean()) result.put(entry.getKey(), v.asBoolean());
-      else result.put(entry.getKey(), v.toString());
+    if (metaNode == null) return result;
+    for (Map.Entry<?, ?> entry : metaNode.entrySet()) {
+      result.put(String.valueOf(entry.getKey()), entry.getValue());
     }
     return result;
   }

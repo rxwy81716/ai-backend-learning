@@ -51,7 +51,7 @@
         <el-table-column prop="importedChunks" label="切片进度" width="140">
           <template #default="{ row }">
             <template v-if="row.status === 'DONE'">
-              <el-tag type="success" size="small">{{ row.totalChunks }} / {{ row.totalChunks }}</el-tag>
+              <el-tag type="success" size="small">{{ row.totalChunks }} 段</el-tag>
             </template>
             <template v-else-if="row.status === 'IMPORTING'">
               <el-progress
@@ -84,6 +84,7 @@
                 <el-dropdown-menu>
                   <el-dropdown-item command="logs" :icon="View">查看日志</el-dropdown-item>
                   <el-dropdown-item command="download" :icon="Download">下载文档</el-dropdown-item>
+                  <el-dropdown-item command="reparse" :icon="RefreshRight">重新解析</el-dropdown-item>
                   <el-dropdown-item command="delete" :icon="Delete" divided>
                     <span style="color: var(--el-color-danger)">删除文档</span>
                   </el-dropdown-item>
@@ -179,11 +180,12 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadInstance, UploadFile } from 'element-plus'
-import { uploadDocument, getAllTasks, getTaskStatus, getTaskLogs, deleteDocument, getDownloadUrl } from '@/api/document'
+import { uploadDocument, getAllTasks, getTaskStatus, getTaskLogs, deleteDocument, reparseDocument, getDownloadUrl } from '@/api/document'
 import type { DocumentTask, DocumentTaskLog, TaskStatus, DocScope } from '@/types'
 import {
   Upload,
   Refresh,
+  RefreshRight,
   Document,
   View,
   Download,
@@ -305,9 +307,31 @@ const handleCommand = (command: string, row: DocumentTask) => {
     case 'download':
       handleDownload(row)
       break
+    case 'reparse':
+      handleReparse(row)
+      break
     case 'delete':
       handleDelete(row)
       break
+  }
+}
+
+// 重新解析文档
+const handleReparse = async (row: DocumentTask) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要重新解析文档「${row.fileName}」吗？将清除已有切片数据并重新读取、切片、入库。`,
+      '确认重新解析',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    await reparseDocument(row.taskId)
+    ElMessage.success('重新解析已触发')
+    loadTasks()
+    startPolling()
+  } catch (error: any) {
+    if (error !== 'cancel') {
+      ElMessage.error(error.message || '重新解析失败')
+    }
   }
 }
 
