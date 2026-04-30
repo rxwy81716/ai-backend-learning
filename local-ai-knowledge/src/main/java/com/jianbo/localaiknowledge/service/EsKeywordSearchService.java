@@ -1,7 +1,6 @@
 package com.jianbo.localaiknowledge.service;
 
 import co.elastic.clients.elasticsearch.ElasticsearchClient;
-import co.elastic.clients.elasticsearch._types.query_dsl.Operator;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import co.elastic.clients.elasticsearch.core.SearchResponse;
 import co.elastic.clients.elasticsearch.core.search.Hit;
@@ -66,8 +65,9 @@ public class EsKeywordSearchService {
   @SuppressWarnings({"rawtypes", "unchecked"})
   public List<Document> searchWithOwnership(String query, String userId, int topK) {
     try {
+      // 使用 match_phrase 保持短语完整性，避免"蒜薹噩梦"被分词器拆分成"蒜薹"和"噩梦"
       Query matchContent =
-          Query.of(q -> q.match(m -> m.field("content").query(query).operator(Operator.Or)));
+          Query.of(q -> q.matchPhrase(m -> m.field("content").query(query)));
       Query ownership = buildOwnershipQuery(userId);
 
       // _source 只取 content + metadata，减小网络开销

@@ -163,16 +163,18 @@ public class RagAgentService {
               6. 若所有工具都无相关结果，再基于自身常识作答，并明确告知'以下回答基于通用知识，仅供参考'
               7. 不要编造工具未返回的链接、数据、人名
 
-            严格归因（防幻觉，红线规则）：
-              - 你的回答只能基于"工具返回的【序号】片段中实际出现的文字"或"用户消息明确给出的事实"。
-                禁止用训练语料里的同名/相似主题脑补补全。例：知识库里若是某书的分镜脚本，
-                就不能用网络上对同名作品的剧情概述来作答。
+            严格归因（防幻觉，红线规则，绝对禁止违反）：
+              - 你的回答**只能**基于"工具返回的【序号】片段中实际出现的文字"或"用户消息明确给出的事实"。
+                **绝对禁止**用训练语料里的同名/相似主题脑补补全。即使你训练数据中有完整剧情，
+                只要工具返回的片段里没有这些内容，就**禁止**用训练数据补全。
               - 当工具有命中但片段不足以回答用户问题时，必须明说："知识库中检索到《xxx》相关片段，
                 但未直接说明【用户问的具体点】，以下信息基于片段中出现的内容："并仅引用片段实有内容；
                 若片段里也没有相关信息，必须回答："知识库中检索到《xxx》相关文档，但未涵盖该问题，
-                建议查阅原文。"严禁用通用知识补完后冒充检索结果。
-              - 严禁出现"根据知识库""我检索了知识库""企业私域知识库的检索结果显示"等措辞，
+                建议查阅原文。"**严禁**用通用知识补完后冒充检索结果。
+              - **严禁**出现"根据知识库""我检索了知识库""企业私域知识库的检索结果显示"等措辞，
                 除非你引用的是工具实际返回的具体片段内容。
+              - 如果工具返回的片段内容明显与用户问题不相关，
+                必须回答："知识库中检索到相关文档，但未涵盖该问题，建议查阅原文。"
 
             输出规范（极重要）：
               - 调用工具前后均不要输出任何"我将检索/调用xxx/让我查询/我需要调用知识库"之类的过渡说明
@@ -273,7 +275,7 @@ public class RagAgentService {
                           () -> {
                             Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
                             List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
-                            String source = decideSource(invoked, toolsDisabled);
+                            String source = decideSource(invoked, toolsDisabled, docs.size());
 
                             Map<String, Object> meta = new LinkedHashMap<>();
                             meta.put("source", source);
@@ -312,7 +314,7 @@ public class RagAgentService {
                         fullAnswer.append(fallback);
                         Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
                         List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
-                        String src = decideSource(invoked, toolsDisabled);
+                        String src = decideSource(invoked, toolsDisabled, docs.size());
                         Map<String, Object> meta = new LinkedHashMap<>();
                         meta.put("source", src);
                         meta.put("invokedTools", invoked);
@@ -343,7 +345,7 @@ public class RagAgentService {
                         }
                         Set<String> invoked = ctx.getInvokedTools();
                         List<Document> docs = ctx.getRetrievedDocs();
-                        String source = decideSource(invoked, toolsDisabled);
+                        String source = decideSource(invoked, toolsDisabled, docs.size());
                         Map<String, Object> metaMap = new LinkedHashMap<>();
                         metaMap.put(META_KEY_MODE, finalMode);
                         metaMap.put("source", source);
@@ -626,8 +628,12 @@ public class RagAgentService {
   }
 
   /** 根据工具调用记录推断响应来源标识。 优先级：knowledge_base > hot_search > web_search > llm_direct */
-  private String decideSource(Set<String> invokedTools, boolean toolsDisabled) {
+  private String decideSource(Set<String> invokedTools, boolean toolsDisabled, int hitCount) {
     if (toolsDisabled || invokedTools == null || invokedTools.isEmpty()) {
+      return "llm_direct";
+    }
+    // 如果工具被调用但返回 0 个文档，说明没有实际使用知识库内容，应标记为 llm_direct
+    if (hitCount == 0) {
       return "llm_direct";
     }
     if (invokedTools.contains(RagTools.TOOL_KB)) return "knowledge_base";

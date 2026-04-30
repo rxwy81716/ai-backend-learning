@@ -51,7 +51,7 @@ public class RagTools {
       description =
           """
             从企业私域知识库（用户上传的文档、PDF、Word 等）中检索与问题最相关的内容片段。
-            优先调用此工具；只有当本工具返回'知识库暂无相关内容'时，才考虑调用其它工具或基于自身知识回答。
+            优先调用此工具。如果知识库中没有相关内容，工具会明确提示你基于通用知识回答。
             适用场景：用户询问产品文档、内部资料、合同条款、专业领域知识等。""")
   public String searchKnowledgeBase(
       @ToolParam(description = "用户问题的检索关键词，建议保留专有名词、人名、产品名等关键信息") String query,
@@ -77,7 +77,7 @@ public class RagTools {
         System.currentTimeMillis() - t0);
 
     if (docs.isEmpty()) {
-      return "知识库暂无相关内容。";
+      return "知识库暂无相关内容。请基于你的通用知识回答用户问题，并在回答末尾明确告知'以下回答基于通用知识，仅供参考'。";
     }
     return formatDocs(docs);
   }
