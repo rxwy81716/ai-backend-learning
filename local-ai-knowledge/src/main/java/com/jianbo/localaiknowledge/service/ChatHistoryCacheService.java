@@ -15,8 +15,8 @@ import java.util.concurrent.TimeUnit;
 /**
  * 多轮对话历史缓存服务（Redis 热缓存 + DB 持久化）
  *
- * <p>策略： 读：Redis → miss → DB → 回填 Redis 写：DB + Redis 双写 过期：Redis TTL 30 分钟（不活跃会话自动清理） 删除：同时清 Redis
- * + DB
+ * <p>策略： 读：Redis → miss → DB → 回填 Redis 写：先 DB 后 Redis（DB 失败抛异常，Redis 失败兜底 evict）
+ * 过期：Redis TTL 4 小时 + 读时续期（不活跃会话自然清理） 删除：同时清 Redis + DB
  *
  * <p>高并发优势： - 热会话命中 Redis，~1ms 响应 - DB 只在首次 miss 时查一次 - 即使 Redis 挂了，DB 兜底不丢数据
  */
@@ -29,23 +29,39 @@ public class ChatHistoryCacheService {
   private final RedisTemplate<String, Object> redisTemplate;
 
   private static final String KEY_PREFIX = "chat:session:";
-  private static final long TTL_MINUTES = 30;
+  // 4 小时窗口：覆盖典型用户"短暂离开继续聊"的场景；读时续期已在 loadRecentHistory 内做，
+  // 长期不活跃的会话仍会被自然过期不占内存。
+  private static final long TTL_MINUTES = 240;
 
   /**
    * 保存一条消息（Redis + DB 双写）。
    *
    * <p>调用方保证在可阻塞线程上调用：同步 chat() 走请求线程；流式 chatStream() 的 doOnComplete 通过
-   * {@code subscribeOn(boundedElastic())} 已经在 boundedElastic 上。DB 写失败只记日志，不影响主流程。
+   * {@code subscribeOn(boundedElastic())} 已经在 boundedElastic 上。
+   *
+   * <p>一致性：先写 DB（失败抛异常，由调用方决定如何处理），再写 Redis；Redis 失败时主动 evict
+   * 该 session 缓存，避免后续读取到“缺这条”的旧 Redis。
    */
   public void saveMessage(ChatMessage message) {
     String key = KEY_PREFIX + message.getSessionId();
-    redisTemplate.opsForList().rightPush(key, message);
-    redisTemplate.expire(key, TTL_MINUTES, TimeUnit.MINUTES);
 
+    // 1. 先 DB（持久层为准），失败直接抛出，不污染 Redis
+    conversationMapper.insert(message);
+
+    // 2. 再写 Redis；Redis 失败兜底删 key，下次 load 走 DB 重建，避免缓存与 DB 不一致
     try {
-      conversationMapper.insert(message);
+      redisTemplate.opsForList().rightPush(key, message);
+      redisTemplate.expire(key, TTL_MINUTES, TimeUnit.MINUTES);
     } catch (Exception e) {
-      log.error("DB 持久化失败 | session={}, error={}", message.getSessionId(), e.getMessage());
+      log.error(
+          "Redis 写入失败，清除缓存以保证一致性 | session={}, error={}",
+          message.getSessionId(),
+          e.getMessage());
+      try {
+        redisTemplate.delete(key);
+      } catch (Exception ignore) {
+        // Redis 不可用时 delete 也会抛，吞掉即可，下次读自然 miss 走 DB
+      }
     }
 
     log.debug("消息已保存 | session={}, role={}", message.getSessionId(), message.getRole());

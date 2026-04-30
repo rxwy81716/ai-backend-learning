@@ -35,6 +35,19 @@ export const renameSession = (sessionId: string, title: string) => {
   return request.put<any, { message: string; sessionId: string }>(`/api/rag/session/${sessionId}/title`, { title })
 }
 
+// 提交消息反馈（👍/👎），rating: 1=赞 / -1=踩
+export function submitFeedback(payload: {
+  messageId: number
+  rating: 1 | -1
+  sessionId: string
+  comment?: string
+}) {
+  return request.post<any, { ok: boolean; messageId: number; rating: number }>(
+    '/api/rag/feedback',
+    payload
+  )
+}
+
 // ==================== Prompt管理 ====================
 
 // 获取所有Prompt

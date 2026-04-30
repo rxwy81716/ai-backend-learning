@@ -75,6 +75,8 @@ export interface DocumentTaskLog {
 export type ChatMode = 'KNOWLEDGE' | 'LLM'
 
 export interface ChatMessage {
+  /** chat_conversation.id，仅历史接口返回时存在；流式生成中的消息无 id */
+  id?: number
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp?: string

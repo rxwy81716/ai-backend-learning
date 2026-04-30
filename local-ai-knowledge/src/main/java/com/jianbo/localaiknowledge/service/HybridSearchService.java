@@ -111,7 +111,10 @@ public class HybridSearchService {
   }
 
   private String buildCacheKey(String query, String userId, int topK) {
-    String q = query == null ? "" : query.trim();
+    // 规范化：trim + lower + 多空白合并；让 "如何使用"/"如何 使用"/"  如何使用 " 命中同一缓存。
+    // 中文不受 lower 影响；空格/换行/Tab 统一压成单空格。
+    String q =
+        query == null ? "" : query.trim().toLowerCase().replaceAll("\\s+", " ");
     String u = (userId == null || userId.isBlank()) ? "_anon_" : userId;
     return u + "|" + topK + "|" + q;
   }

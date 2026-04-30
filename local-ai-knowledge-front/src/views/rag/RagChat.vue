@@ -79,12 +79,12 @@
             <p>我可以帮您基于知识库回答问题，支持网络搜索降级</p>
           </div>
 
-          <div
-            v-for="(msg, index) in messages"
-            :key="index"
-            class="message-item"
-            :class="msg.role"
-          >
+          <template v-for="(msg, index) in messages" :key="index">
+            <!-- system 提示（如模式切换通知）：灰色居中，不带头像 -->
+            <div v-if="msg.role === 'system'" class="message-system">
+              {{ msg.content }}
+            </div>
+            <div v-else class="message-item" :class="msg.role">
             <div class="message-avatar">
               <el-avatar v-if="msg.role === 'user'" :icon="UserFilled" />
               <el-avatar v-else :icon="ChatDotRound" class="ai-avatar" />
@@ -94,7 +94,7 @@
               <!-- 回答来源标签 -->
               <div v-if="msg.role === 'assistant' && msg.meta" class="message-meta">
                 <el-tag v-if="msg.meta.source === 'knowledge_base'" type="success" size="small" effect="plain">
-                  知识库回答 · 命中 {{ msg.meta.hitCount }} 条
+                  知识库回答
                 </el-tag>
                 <el-tag v-else-if="msg.meta.source === 'web_search'" type="warning" size="small" effect="plain">
                   网络搜索回答
@@ -122,8 +122,57 @@
               <div class="message-time" v-if="msg.timestamp">
                 {{ formatTime(msg.timestamp) }}
               </div>
+              <!-- assistant 消息的操作按钮：复制 / 重新生成 / 👍 / 👎
+                   流式生成中（最后一条且 isStreaming）暂不显示，避免误操作 -->
+              <div
+                v-if="msg.role === 'assistant'
+                  && !(isStreaming && index === messages.length - 1)"
+                class="message-actions"
+              >
+                <el-tooltip content="复制" placement="top">
+                  <el-button text size="small" class="msg-action-btn" @click="copyMessage(msg)">
+                    <el-icon><DocumentCopy /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip content="重新生成" placement="top">
+                  <el-button
+                    text
+                    size="small"
+                    class="msg-action-btn"
+                    :disabled="isStreaming"
+                    @click="handleRegenerate(index)"
+                  >
+                    <el-icon><Refresh /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip :content="msg.feedback === 1 ? '已点赞' : '点赞'" placement="top">
+                  <el-button
+                    text
+                    size="small"
+                    class="msg-action-btn"
+                    :class="{ active: msg.feedback === 1 }"
+                    :disabled="!msg.id"
+                    @click="handleFeedback(msg, 1)"
+                  >
+                    <el-icon><CaretTop /></el-icon>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip :content="msg.feedback === -1 ? '已点踩' : '点踩'" placement="top">
+                  <el-button
+                    text
+                    size="small"
+                    class="msg-action-btn"
+                    :class="{ active: msg.feedback === -1 }"
+                    :disabled="!msg.id"
+                    @click="handleFeedback(msg, -1)"
+                  >
+                    <el-icon><CaretBottom /></el-icon>
+                  </el-button>
+                </el-tooltip>
+              </div>
             </div>
-          </div>
+            </div>
+          </template>
 
           <!-- 流式输出指示器 -->
           <div v-if="isStreaming" class="message-item assistant streaming">
@@ -183,14 +232,24 @@
             @keydown.enter.exact.prevent="handleSend"
           />
           <div class="input-actions">
+            <!-- 生成中：显示停止按钮（红色），用户随时打断；
+                 空闲：显示发送按钮 -->
             <el-button
+              v-if="isStreaming"
+              type="danger"
+              @click="handleStop"
+            >
+              <el-icon><CircleClose /></el-icon>
+              停止生成
+            </el-button>
+            <el-button
+              v-else
               type="primary"
-              :loading="isStreaming"
-              :disabled="!question.trim() || isStreaming"
+              :disabled="!question.trim()"
               @click="handleSend"
             >
-              <el-icon v-if="!isStreaming"><Promotion /></el-icon>
-              {{ isStreaming ? '生成中...' : '发送' }}
+              <el-icon><Promotion /></el-icon>
+              发送
             </el-button>
           </div>
         </div>
@@ -210,13 +269,15 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getSessions, getHistory, deleteSession as deleteSessionApi, renameSession as renameSessionApi } from '@/api/rag'
+import { getSessions, getHistory, deleteSession as deleteSessionApi, renameSession as renameSessionApi, submitFeedback } from '@/api/rag'
 import type { Session, ChatMode } from '@/types'
 import { requestStream } from '@/utils/request'
 
 interface StreamChatMessage {
+  /** 后端 chat_conversation.id；流式生成中尚未持久化的消息无 id */
+  id?: number
   role: 'user' | 'assistant' | 'system'
   content: string
   timestamp?: string
@@ -227,6 +288,8 @@ interface StreamChatMessage {
     disclaimer?: string
   }
   showRefs?: boolean
+  /** 用户对该 assistant 消息的本地反馈状态：1=赞 / -1=踩；用于按钮高亮 */
+  feedback?: 1 | -1
 }
 import {
   Plus,
@@ -241,7 +304,11 @@ import {
   DocumentCopy,
   Collection,
   Document,
-  ArrowDown
+  ArrowDown,
+  CircleClose,
+  Refresh,
+  CaretTop,
+  CaretBottom
 } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
@@ -263,7 +330,26 @@ const isStreaming = ref(false)
 const messageListRef = ref<HTMLElement>()
 const currentAnswer = ref('')
 const lastAnswer = ref('')
+// 当前流式句柄：用户点击"停止"时通过 .cancel() 触发 AbortController.abort()，
+// 后端 Reactor 链同时收到 CANCEL 信号停止 LLM 调用，避免继续烧 token。
+const currentStream = ref<{ cancel: () => void } | null>(null)
 const chatMode = ref<ChatMode>('KNOWLEDGE')
+
+// 切换模式时插入一条灰色 system 提示，明确告知用户：知识库历史与 LLM 直答历史互不影响。
+// 仅当当前会话已有消息时才提示（空对话切来切去没意义，避免噪音）。
+watch(chatMode, (next, prev) => {
+  if (next === prev || messages.value.length === 0) return
+  const tip =
+    next === 'LLM'
+      ? '⚠️ 已切换到「LLM 直答模式」：本模式独立于知识库历史，回答仅基于 AI 通用知识。'
+      : '✅ 已切换回「知识库模式」：将基于知识库 + 工具调用回答。'
+  messages.value.push({
+    role: 'system',
+    content: tip,
+    timestamp: new Date().toISOString()
+  })
+  scrollToBottom()
+})
 // 思考模式：默认关闭（快速模式）；开启后让模型先深度推理再回答，速度变慢但答案更稳
 const thinkingMode = ref(false)
 const renameDialogVisible = ref(false)
@@ -296,7 +382,7 @@ const selectSession = async (sessionId: string) => {
   currentSessionId.value = sessionId
   try {
     const history = await getHistory(sessionId)
-    messages.value = history
+    messages.value = normalizeHistory(history)
     scrollToBottom()
   } catch (error) {
     console.error('加载会话历史失败:', error)
@@ -359,7 +445,6 @@ const handleSend = async () => {
 
   const q = question.value.trim()
   question.value = ''
-  currentAnswer.value = ''
 
   // 添加用户消息
   messages.value.push({
@@ -369,12 +454,18 @@ const handleSend = async () => {
   })
   scrollToBottom()
 
-  // 流式请求
+  await runStream(q)
+}
+
+// 真正发起流式请求（用户消息已在 messages 数组末尾或不需要重复入栈，由调用方控制）。
+// 拆出来给 handleSend / handleRegenerate 复用。
+const runStream = async (q: string) => {
+  currentAnswer.value = ''
   isStreaming.value = true
   let fullAnswer = ''
   let streamMeta: StreamChatMessage['meta'] = undefined
 
-  requestStream(
+  currentStream.value = requestStream(
     '/api/rag/chat/stream',
     {
       question: q,
@@ -418,10 +509,13 @@ const handleSend = async () => {
       scrollToBottom()
     },
     (error) => {
+      isStreaming.value = false
+      currentStream.value = null
       ElMessage.error('请求失败: ' + error.message)
     },
     async () => {
       isStreaming.value = false
+      currentStream.value = null
       lastAnswer.value = fullAnswer
       // 刷新会话列表；新对话首次发消息后自动绑定 sessionId
       const wasNew = !currentSessionId.value
@@ -434,7 +528,7 @@ const handleSend = async () => {
       if (currentSessionId.value) {
         try {
           const history = await getHistory(currentSessionId.value)
-          messages.value = history
+          messages.value = normalizeHistory(history)
           scrollToBottom()
         } catch (e) {
           console.warn('刷新历史失败:', e)
@@ -444,11 +538,108 @@ const handleSend = async () => {
   )
 }
 
-// 复制答案
-const copyAnswer = () => {
-  if (!lastAnswer.value) return
-  navigator.clipboard.writeText(lastAnswer.value)
-  ElMessage.success('已复制到剪贴板')
+// 后端 chat_conversation 返回的是字符串 metadata；前端模板用 msg.meta 对象。
+// 这里统一把每条消息的 metadata JSON 解析到 meta，并保留 id 用于反馈接口。
+const normalizeHistory = (history: any[]): StreamChatMessage[] => {
+  return (history || []).map((m) => {
+    const out: StreamChatMessage = {
+      id: m.id,
+      role: m.role,
+      content: m.content,
+      timestamp: m.timestamp ?? m.createdAt
+    }
+    if (m.metadata) {
+      try {
+        out.meta = typeof m.metadata === 'string' ? JSON.parse(m.metadata) : m.metadata
+      } catch {
+        // metadata 解析失败不影响消息展示
+      }
+    } else if (m.meta) {
+      out.meta = m.meta
+    }
+    return out
+  })
+}
+
+// 停止生成：取消前端 fetch + 触发后端 Reactor CANCEL，
+// 同时给当前 assistant 消息打上"已中断"标记，让用户清楚区分。
+const handleStop = () => {
+  if (!currentStream.value) return
+  currentStream.value.cancel()
+  currentStream.value = null
+  isStreaming.value = false
+  const lastMsg = messages.value[messages.value.length - 1]
+  if (lastMsg?.role === 'assistant') {
+    lastMsg.content = (lastMsg.content || '') + '\n\n_[已中断]_'
+  }
+  ElMessage.info('已停止生成')
+}
+
+// 复制单条 assistant 消息内容到剪贴板（兼容非 https 场景的退化方案）
+const copyMessage = async (msg: StreamChatMessage) => {
+  const text = msg.content || ''
+  if (!text) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    ElMessage.success('已复制到剪贴板')
+  } catch (e) {
+    console.error('复制失败:', e)
+    ElMessage.error('复制失败')
+  }
+}
+
+// 重新生成：定位到该 assistant 消息上一条 user 消息，删除从该 assistant 起的所有后续消息，
+// 然后用同一问题重新发起流式请求；不会重复 push user 消息，避免历史重复。
+const handleRegenerate = async (index: number) => {
+  if (isStreaming.value) {
+    ElMessage.warning('正在生成中，请先停止')
+    return
+  }
+  // 向上找最近的 user 消息
+  let userIdx = index - 1
+  while (userIdx >= 0 && messages.value[userIdx].role !== 'user') userIdx--
+  if (userIdx < 0) {
+    ElMessage.warning('未找到对应的提问')
+    return
+  }
+  const q = messages.value[userIdx].content
+  // 截断到 user 消息结尾（移除原 assistant 回答与之后所有内容）
+  messages.value = messages.value.slice(0, userIdx + 1)
+  scrollToBottom()
+  await runStream(q)
+}
+
+// 提交反馈：rating 1=赞 / -1=踩；同一条消息再次点同样按钮 = 取消（本地侧），
+// 但后端只做"覆盖式"upsert，不支持删除；这里点同值则不再请求，避免无效写。
+const handleFeedback = async (msg: StreamChatMessage, rating: 1 | -1) => {
+  if (!msg.id) {
+    ElMessage.warning('消息尚未持久化，请稍后再试')
+    return
+  }
+  if (!currentSessionId.value) return
+  if (msg.feedback === rating) return
+  try {
+    await submitFeedback({
+      messageId: msg.id,
+      rating,
+      sessionId: currentSessionId.value
+    })
+    msg.feedback = rating
+    ElMessage.success(rating === 1 ? '感谢您的认可' : '已记录，会持续改进')
+  } catch (e) {
+    console.error('提交反馈失败:', e)
+  }
 }
 
 // HTML转义（防止XSS）
@@ -660,6 +851,19 @@ onMounted(() => {
 .message-item {
   display: flex;
   margin-bottom: 20px;
+}
+
+/* 系统提示（如模式切换通知）：灰色居中，与用户/AI 气泡明显区分 */
+.message-system {
+  margin: 12px auto;
+  padding: 6px 14px;
+  max-width: 80%;
+  text-align: center;
+  font-size: 12px;
+  color: #909399;
+  background: #f4f4f5;
+  border-radius: 12px;
+  line-height: 1.5;
 }
 
 .message-item.user {
@@ -893,6 +1097,40 @@ onMounted(() => {
   font-size: 12px;
   color: #999;
   margin-top: 4px;
+}
+
+/* assistant 消息下方的操作按钮行：复制 / 重新生成 / 👍 / 👎 */
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+  opacity: 0.55;
+  transition: opacity 0.2s;
+}
+
+.message-item.assistant:hover .message-actions {
+  opacity: 1;
+}
+
+.msg-action-btn {
+  padding: 4px 6px;
+  height: auto;
+  min-height: 0;
+  color: #909399;
+}
+
+.msg-action-btn:hover {
+  color: #409eff;
+  background: rgba(64, 158, 255, 0.08);
+}
+
+.msg-action-btn.active {
+  color: #409eff;
+}
+
+.msg-action-btn.is-disabled {
+  color: #c0c4cc;
 }
 
 .typing-indicator {

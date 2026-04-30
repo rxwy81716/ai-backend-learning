@@ -55,3 +55,23 @@ CREATE INDEX IF NOT EXISTS idx_doc_task_scope ON document_task (doc_scope);
 
 COMMENT ON COLUMN document_task.user_id IS '上传用户ID（NULL=公共/爬虫）';
 COMMENT ON COLUMN document_task.doc_scope IS '文档范围：PRIVATE=用户私有 / PUBLIC=公共';
+
+-- ==================== chat_feedback 表（用户对单条 assistant 消息的👍/👎） ====================
+CREATE TABLE IF NOT EXISTS chat_feedback
+(
+    id         BIGSERIAL PRIMARY KEY,
+    session_id VARCHAR(64) NOT NULL,
+    message_id BIGINT      NOT NULL,
+    user_id    VARCHAR(64) NOT NULL,
+    rating     SMALLINT    NOT NULL,           -- 1=👍 / -1=👎
+    comment    TEXT,
+    created_at TIMESTAMP   NOT NULL DEFAULT NOW(),
+    CONSTRAINT uk_feedback_user_msg UNIQUE (user_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_session ON chat_feedback (session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_feedback_message ON chat_feedback (message_id);
+
+COMMENT ON TABLE chat_feedback IS '用户对 assistant 消息的反馈（👍/👎）';
+COMMENT ON COLUMN chat_feedback.message_id IS '对应 chat_conversation.id';
+COMMENT ON COLUMN chat_feedback.rating IS '1=赞 / -1=踩';

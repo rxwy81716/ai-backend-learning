@@ -3,7 +3,7 @@ server:
 spring:
   profiles:
     # 默认走 glm（智谱 glm-4-flash，永久免费）；切 DeepSeek 用 -Dspring.profiles.active=deepseek
-    active: ${SPRING_PROFILES_ACTIVE:glm}
+    active: ${SPRING_PROFILES_ACTIVE:deepseek}
   application:
     name: local-ai-knowledge
   ai:
@@ -53,10 +53,20 @@ spring:
       port: 6379
   # ==================== 数据库 ====================
   datasource:
-    url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge
+    url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge?tcpKeepAlive=true
     username: jianbo
     password: 525826
     driver-class-name: org.postgresql.Driver
+    hikari:
+      # 公网 PG：中间网络/PG 自身可能在 5~10min 内回收 idle，HikariCP 默认 30min
+      # 容易拿到死连接报 "This connection has been closed."。把生命周期压短到 5min，
+      # 比中间链路更早主动关掉，可避免上述告警。
+      max-lifetime: 300000          # 5 分钟（必须 < PG/网关 idle 超时）
+      idle-timeout: 180000          # 3 分钟空闲即归还
+      keepalive-time: 120000        # 2 分钟做一次 connectionTestQuery，链路探活
+      connection-test-query: SELECT 1
+      minimum-idle: 2
+      maximum-pool-size: 10
 app:
   upload:
     dir: ./uploads
@@ -73,6 +83,11 @@ app:
   rate-limit:
     anonymous-max: 20                 # 匿名用户每窗口最大请求数
     window-minutes: 60                # 限流窗口（分钟）
+    # 已认证用户的 chat 接口限流（仅作用于 /api/rag/chat 与 /api/rag/chat/stream）
+    chat:
+      user-qps: 2                     # 单用户每秒最大请求数
+      user-daily: 200                 # 单用户每天最大请求数
+      ip-qps: 5                       # 单 IP 每秒最大请求数（同 IP 多账号防刷）
   rag:
     # 混合检索：向量召回 + BM25 关键词召回 + RRF 融合
     hybrid:
@@ -92,7 +107,7 @@ mybatis:
   configuration:
     map-underscore-to-camel-case: true
 #    打印sql
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+#    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
 logging:
   # 自定义 logback 配置位置（放在 resources/logs/ 下，需显式指定）
   config: classpath:logs/logback-spring.xml

@@ -91,6 +91,25 @@ public interface ChatConversationMapper {
   boolean existsBySessionAndUserId(
       @Param("sessionId") String sessionId, @Param("userId") String userId);
 
+  /**
+   * 查询 sessionId 当前归属的 userId（任意一条消息的 user_id）。
+   *
+   * <p>用于聊天入口的鉴权：
+   *
+   * <ul>
+   *   <li>返回 {@code null}：该 sessionId 在 DB 中尚不存在（新会话首次发消息），放行
+   *   <li>返回值 == 当前 userId：本人会话，放行
+   *   <li>返回值 != 当前 userId：他人会话，拒绝 403
+   * </ul>
+   */
+  @Select(
+      """
+        SELECT user_id FROM chat_conversation
+        WHERE session_id = #{sessionId}
+        LIMIT 1
+    """)
+  String selectOwnerOfSession(@Param("sessionId") String sessionId);
+
   @Delete("DELETE FROM chat_conversation WHERE session_id = #{sessionId}")
   void deleteBySession(@Param("sessionId") String sessionId);
 }

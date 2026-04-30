@@ -76,10 +76,14 @@ public class HotSearchService {
         items = hotItemMapper.findByDateAndSource(today.minusDays(1), targetSource);
       }
     } else {
-      // 未指定来源 → 各来源 Top 10
-      items = hotItemMapper.topNByDate(today, 10);
+      // 未指定来源 → 每个来源 Top 5（mapper 按 rank<=N 过滤，rank 是按 source 分组的）
+      // 同时整体截断到 20 条，避免 6 个平台 × 10 条把 LLM token 撑爆
+      items = hotItemMapper.topNByDate(today, PER_SOURCE_TOP_N);
       if (items.isEmpty()) {
-        items = hotItemMapper.topNByDate(today.minusDays(1), 10);
+        items = hotItemMapper.topNByDate(today.minusDays(1), PER_SOURCE_TOP_N);
+      }
+      if (items.size() > GLOBAL_MAX_ITEMS) {
+        items = items.subList(0, GLOBAL_MAX_ITEMS);
       }
     }
 
@@ -90,6 +94,12 @@ public class HotSearchService {
     return formatAsContext(items, targetSource);
   }
 
+  /** 未指定来源时，每个平台返回的最大条数（控制 LLM 上下文长度）。 */
+  private static final int PER_SOURCE_TOP_N = 5;
+
+  /** 未指定来源时，跨平台合并后整体最大条数。 */
+  private static final int GLOBAL_MAX_ITEMS = 20;
+
   /** 格式化热榜数据为 LLM 上下文 */
   private String formatAsContext(List<Map<String, Object>> items, String source) {
     StringBuilder sb = new StringBuilder();
@@ -98,7 +108,9 @@ public class HotSearchService {
       String displayName = SOURCE_DISPLAY_MAP.getOrDefault(source, source);
       sb.append("以下是最新的【").append(displayName).append("】热榜数据：\n\n");
     } else {
-      sb.append("以下是各平台最新热榜数据（每个来源 Top 10）：\n\n");
+      sb.append("以下是各平台最新热榜数据（每个来源 Top ")
+          .append(PER_SOURCE_TOP_N)
+          .append("）：\n\n");
     }
 
     String currentSource = null;
