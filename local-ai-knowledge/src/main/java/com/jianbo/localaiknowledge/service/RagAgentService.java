@@ -60,6 +60,7 @@ public class RagAgentService {
   private final ChatContextUtil chatContextUtil;
   private final ObjectMapper objectMapper;
   private final RagTools ragTools;
+  private final QueryRewriteService queryRewriteService;
 
   private final ChatClient chatClient;
 
@@ -225,6 +226,21 @@ public class RagAgentService {
 
     // Spring AI 2.x 原生 ToolContext：跨线程安全传递，不依赖 ThreadLocal
     final RagToolContext ctx = RagToolContext.create(userId);
+
+    // Query Rewriting：多轮对话时将指代/省略改写为独立检索 query
+    if (!toolsDisabled) {
+      List<Message> historyOnly = messages.stream()
+          .filter(m -> !(m instanceof org.springframework.ai.chat.messages.SystemMessage))
+          .toList();
+      // historyOnly 的最后一条是当前 question，去掉后传给 rewrite
+      if (historyOnly.size() > 1) {
+        List<Message> prevHistory = historyOnly.subList(0, historyOnly.size() - 1);
+        String rewritten = queryRewriteService.rewrite(prevHistory, question);
+        if (!rewritten.equals(question)) {
+          ctx.setRewrittenQuery(rewritten);
+        }
+      }
+    }
 
     ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
     if (!toolsDisabled) {

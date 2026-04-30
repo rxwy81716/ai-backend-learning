@@ -50,6 +50,7 @@ public class HybridSearchService {
 
   private final EsVectorSearchService vectorSearchService;
   private final EsKeywordSearchService keywordSearchService;
+  private final RerankService rerankService;
 
   /** PG VectorStore（Spring AI 自动配置 bean 名 "vectorStore"，必须用 @Qualifier 区分 ES @Primary bean） */
   @Qualifier("vectorStore")
@@ -80,6 +81,10 @@ public class HybridSearchService {
 
   @Value("${app.rag.hybrid.similarity-threshold:0.25}")
   private double similarityThreshold;
+
+  /** Rerank 启用时，RRF 融合阶段扩大候选池（取更多再精排），提升 recall→precision 转化 */
+  @Value("${app.rag.rerank.candidates:20}")
+  private int rerankCandidates;
 
   /**
    * 混合检索（带用户归属过滤）
@@ -199,19 +204,31 @@ public class HybridSearchService {
       }
     }
 
-    List<Document> fused = rrfFuse(vectorHits, keywordHits, topK);
+    // Rerank 启用时：RRF 先取更多候选（rerankCandidates），再精排到 topK
+    int rrfTopK = rerankService.isEnabled() ? Math.max(topK, rerankCandidates) : topK;
+    List<Document> fused = rrfFuse(vectorHits, keywordHits, rrfTopK);
     long t2 = System.currentTimeMillis();
 
+    // Cross-Encoder Rerank（可选）：对 RRF 候选做细粒度精排
+    List<Document> finalResult;
+    if (rerankService.isEnabled() && fused.size() > 1) {
+      finalResult = rerankService.rerank(query, fused, topK);
+    } else {
+      finalResult = fused;
+    }
+    long t3 = System.currentTimeMillis();
+
     log.info(
-        "⏱ Hybrid检索 vector={}条/{}ms, bm25={}条, RRF融合={}条/{}ms, 总{}ms",
+        "⏱ Hybrid检索 vector={}条/{}ms, bm25={}条, RRF融合={}条, rerank={}条/{}ms, 总{}ms",
         vectorHits.size(),
         t1 - t0,
         keywordHits.size(),
         fused.size(),
-        t2 - t1,
-        t2 - t0);
+        finalResult.size(),
+        t3 - t2,
+        t3 - t0);
 
-    return fused;
+    return finalResult;
   }
 
   /**

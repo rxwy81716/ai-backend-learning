@@ -1,6 +1,7 @@
 package com.jianbo.localaiknowledge.service.agent;
 
 import lombok.Getter;
+import lombok.Setter;
 import org.springframework.ai.document.Document;
 
 import java.util.Collections;
@@ -28,6 +29,10 @@ public class RagToolContext {
   /** 当前请求的用户 ID（null = 未登录，仅看公共文档） */
   private final String userId;
 
+  /** Query Rewrite 改写后的检索 query（null = 未改写，工具应使用 LLM 传入的原始 query） */
+  @Setter
+  private volatile String rewrittenQuery;
+
   /** 实际被 LLM 调用过的工具名称（按调用顺序、去重） */
   private final Set<String> invokedTools = Collections.synchronizedSet(new LinkedHashSet<>());
 
@@ -41,6 +46,12 @@ public class RagToolContext {
   /** 创建一次请求的上下文实例。 */
   public static RagToolContext create(String userId) {
     return new RagToolContext(userId);
+  }
+
+  /** 获取检索用 query：优先改写版，无则返回 fallback */
+  public String getSearchQuery(String fallback) {
+    String rq = rewrittenQuery;
+    return (rq != null && !rq.isBlank()) ? rq : fallback;
   }
 
   public void recordInvocation(String toolName) {

@@ -60,8 +60,10 @@ public class RagTools {
     RagToolContext ctx = resolveCtx(toolCtx);
     ctx.recordInvocation(TOOL_KB);
 
+    // 优先使用 Query Rewrite 改写后的检索 query（多轮对话指代消解）
+    String searchQuery = ctx.getSearchQuery(query);
     String userId = ctx.getUserId();
-    List<Document> docs = hybridSearchService.searchWithOwnership(query, userId, DEFAULT_KB_TOP_K);
+    List<Document> docs = hybridSearchService.searchWithOwnership(searchQuery, userId, DEFAULT_KB_TOP_K);
     ctx.addDocs(docs);
 
     log.info(
