@@ -223,11 +223,13 @@ public class HybridSearchService {
     long t3 = System.currentTimeMillis();
 
     log.info(
-        "⏱ Hybrid检索 vector={}条/{}ms, bm25={}条, RRF融合={}条, rerank={}条/{}ms, 总{}ms",
+        "⏱ Hybrid检索 query={}, vector={}条/{}ms, bm25={}条, RRF融合={}条, rerankApplied={}, final={}条/{}ms, 总{}ms",
+        query,
         vectorHits.size(),
         t1 - t0,
         keywordHits.size(),
         fused.size(),
+        rerankService.isEnabled() && fused.size() > 1,
         finalResult.size(),
         t3 - t2,
         t3 - t0);

@@ -67,9 +67,11 @@ public class RagTools {
     ctx.addDocs(docs);
 
     log.info(
-        "[Tool] {} | query={}, userId={}, hit={}, cost={}ms",
+        "[Tool] {} | llmQuery={}, searchQuery={}, rewritten={}, userId={}, hit={}, cost={}ms",
         TOOL_KB,
         query,
+        searchQuery,
+        !searchQuery.equals(query),
         userId,
         docs.size(),
         System.currentTimeMillis() - t0);

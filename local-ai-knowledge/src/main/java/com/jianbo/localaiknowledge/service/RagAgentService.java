@@ -211,162 +211,186 @@ public class RagAgentService {
       String promptName,
       String chatMode,
       boolean thinking) {
-    return Flux.defer(() -> {
-      String mode = normalizeMode(chatMode);
-      boolean toolsDisabled = MODE_LLM.equals(mode);
-      String basePrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
-      String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
-      List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
+    return Flux.defer(
+            () -> {
+              String mode = normalizeMode(chatMode);
+              boolean toolsDisabled = MODE_LLM.equals(mode);
+              String basePrompt =
+                  toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
+              String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
+              List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
 
-      if (sessionId != null) {
-        String userMeta = toJson(Map.of(META_KEY_MODE, mode));
-        chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, userMeta, userId));
-      }
-
-      StringBuilder fullAnswer = new StringBuilder();
-
-      // Spring AI 2.x 原生 ToolContext：跨线程安全传递，不依赖 ThreadLocal
-      final RagToolContext ctx = RagToolContext.create(userId);
-
-      // Query Rewriting：多轮对话时将指代/省略改写为独立检索 query
-      if (!toolsDisabled) {
-        List<Message> historyOnly = messages.stream()
-            .filter(m -> !(m instanceof org.springframework.ai.chat.messages.SystemMessage))
-            .toList();
-        // historyOnly 的最后一条是当前 question，去掉后传给 rewrite
-        if (historyOnly.size() > 1) {
-          List<Message> prevHistory = historyOnly.subList(0, historyOnly.size() - 1);
-          String rewritten = queryRewriteService.rewrite(prevHistory, question);
-          if (!rewritten.equals(question)) {
-            ctx.setRewrittenQuery(rewritten);
-          }
-        }
-      }
-
-      ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
-      if (!toolsDisabled) {
-        spec = spec.tools(ragTools).toolContext(Map.of(RagTools.CTX_KEY, ctx));
-      }
-
-      final String sid = sessionId;
-      final String finalMode = mode;
-      // 流级错误状态：onErrorResume 写入，doFinally 持久化时读取，避免兜底文本被当作正常回答。
-      final String[] errorCodeHolder = new String[1];
-      // 状态机：跨 chunk 跟踪 <think>...</think> 边界，实时丢弃思考块与首部空白
-      final ThinkBlockStripper stripper = new ThinkBlockStripper();
-      return spec.stream()
-        .content()
-        // 双段超时：
-        //   1) 首字节超时：从订阅起 15s 内必须收到第一个 chunk，否则视为上游卡死；
-        //   2) chunk 间 idle 超时：每 25s 必须有新 chunk，长回答不会被整体 60s 掐断。
-        // 注意 Reactor 的 timeout(Duration) 会被每个 onNext 重置，正好用作 idle 看门狗，
-        // 而首字节超时通过单独的 Mono.delay race 实现。
-        .timeout(
-            reactor.core.publisher.Mono.delay(
-                Duration.ofSeconds(STREAM_FIRST_BYTE_TIMEOUT_SECONDS)),
-            ignored ->
-                reactor.core.publisher.Mono.delay(
-                    Duration.ofSeconds(STREAM_IDLE_TIMEOUT_SECONDS)))
-        .map(stripper::process)
-        .concatWith(Flux.defer(() -> {
-          String tail = stripper.flush();
-          return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
-        }))
-        .filter(s -> !s.isEmpty())
-        .doOnNext(fullAnswer::append)
-        .concatWith(
-            Flux.defer(
-                () -> {
-                  // 流末尾追加 [META] 段，前端可解析出工具调用与引用
-                  Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
-                  List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
-                  String source = decideSource(invoked, toolsDisabled);
-
-                  Map<String, Object> meta = new LinkedHashMap<>();
-                  meta.put("source", source);
-                  meta.put("invokedTools", invoked);
-                  meta.put("hitCount", docs.size());
-                  if (!docs.isEmpty()) meta.put("references", buildReferences(docs));
-                  if ("llm_direct".equals(source)) {
-                    meta.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
-                  }
-                  if (errorCodeHolder[0] != null) {
-                    meta.put("error", true);
-                    meta.put("errorCode", errorCodeHolder[0]);
-                  }
-                  return Flux.just("[META]" + toJson(meta) + "[/META]");
-                }))
-        .onErrorResume(
-            e -> {
-              boolean firstByteReceived = !fullAnswer.isEmpty();
-              String code = classifyStreamError(e, firstByteReceived);
-              errorCodeHolder[0] = code;
-              log.error(
-                  "Agent 流式异常 | session={}, code={}, firstByte={}, err={}",
-                  sid,
-                  code,
-                  firstByteReceived,
-                  e.toString());
-              String fallback = renderStreamErrorMessage(code, firstByteReceived);
-              fullAnswer.append(fallback);
-              // 兜底文本仍要发给前端展示；此处也带上 [META]，确保前端拿到 errorCode
-              Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
-              List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
-              String src = decideSource(invoked, toolsDisabled);
-              Map<String, Object> meta = new LinkedHashMap<>();
-              meta.put("source", src);
-              meta.put("invokedTools", invoked);
-              meta.put("hitCount", docs.size());
-              meta.put("error", true);
-              meta.put("errorCode", code);
-              if (!docs.isEmpty()) meta.put("references", buildReferences(docs));
-              return Flux.just(fallback, "[META]" + toJson(meta) + "[/META]");
-            })
-        // 客户端断开时（前端点"停止"或网络中断）记录日志，便于排查和监控浪费的 token 量
-        .doOnCancel(() -> log.info("流式被客户端取消 | session={}", sid))
-        // 无论流式正常完成 / 被 onErrorResume 替换为兜底 / 被客户端 cancel，
-        // 这里都会拿到 fullAnswer（含正文 / 兜底文本 / 已生成的部分），统一持久化，
-        // 避免会话历史"用户问完没回答"的断裂。被取消时给已生成内容加 [已中断] 标记。
-        .doFinally(
-            sig -> {
-              if (sid == null) return;
-              String content = cleanAnswer(fullAnswer.toString());
-              boolean cancelled = sig == reactor.core.publisher.SignalType.CANCEL;
-              boolean failed = errorCodeHolder[0] != null;
-              // 内容空白且非异常 / 非取消（即模型只输出 think 被剥光）：跳过保存，避免空 assistant 污染上下文
-              if (content.isBlank() && !cancelled && !failed) {
-                log.info("流式产出为空（可能仅 think 块），跳过持久化 | session={}", sid);
-                return;
-              }
-              Set<String> invoked = ctx.getInvokedTools();
-              List<Document> docs = ctx.getRetrievedDocs();
-              String source = decideSource(invoked, toolsDisabled);
-              Map<String, Object> metaMap = new LinkedHashMap<>();
-              metaMap.put(META_KEY_MODE, finalMode);
-              metaMap.put("source", source);
-              metaMap.put("invokedTools", invoked);
-              metaMap.put("hitCount", docs.size());
-              if (cancelled) metaMap.put("cancelled", true);
-              if (failed) {
-                metaMap.put("error", true);
-                metaMap.put("errorCode", errorCodeHolder[0]);
-              }
-              if (!docs.isEmpty()) {
-                metaMap.put("references", buildReferences(docs));
-              }
-              String meta = toJson(metaMap);
-              if (cancelled && !content.isEmpty()) {
-                content = content + "\n\n_[已中断]_";
-              }
-              try {
+              if (sessionId != null) {
+                String userMeta = toJson(Map.of(META_KEY_MODE, mode));
                 chatHistoryCache.saveMessage(
-                    ChatMessage.of(sid, "assistant", content, meta, userId));
-              } catch (Exception persistErr) {
-                log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
+                    ChatMessage.of(sessionId, "user", question, userMeta, userId));
               }
+
+              StringBuilder fullAnswer = new StringBuilder();
+              final RagToolContext ctx = RagToolContext.create(userId);
+
+              if (!toolsDisabled) {
+                List<Message> historyOnly =
+                    messages.stream()
+                        .filter(m -> !(m instanceof SystemMessage))
+                        .toList();
+                if (historyOnly.size() > 1) {
+                  List<Message> prevHistory = historyOnly.subList(0, historyOnly.size() - 1);
+                  QueryRewriteService.RewriteResult rewriteResult =
+                      queryRewriteService.rewriteWithTrace(prevHistory, question);
+                  ctx.recordRewrite(rewriteResult);
+                }
+              }
+
+              ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
+              if (!toolsDisabled) {
+                spec = spec.tools(ragTools).toolContext(Map.of(RagTools.CTX_KEY, ctx));
+              }
+
+              final String sid = sessionId;
+              final String finalMode = mode;
+              final String[] errorCodeHolder = new String[1];
+              final ThinkBlockStripper stripper = new ThinkBlockStripper();
+              return spec.stream()
+                  .content()
+                  .timeout(
+                      reactor.core.publisher.Mono.delay(
+                          Duration.ofSeconds(STREAM_FIRST_BYTE_TIMEOUT_SECONDS)),
+                      ignored ->
+                          reactor.core.publisher.Mono.delay(
+                              Duration.ofSeconds(STREAM_IDLE_TIMEOUT_SECONDS)))
+                  .map(stripper::process)
+                  .concatWith(
+                      Flux.defer(
+                          () -> {
+                            String tail = stripper.flush();
+                            return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
+                          }))
+                  .filter(s -> !s.isEmpty())
+                  .doOnNext(fullAnswer::append)
+                  .concatWith(
+                      Flux.defer(
+                          () -> {
+                            Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
+                            List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
+                            String source = decideSource(invoked, toolsDisabled);
+
+                            Map<String, Object> meta = new LinkedHashMap<>();
+                            meta.put("source", source);
+                            meta.put("invokedTools", invoked);
+                            meta.put("hitCount", docs.size());
+                            if (ctx.isRewriteAttempted()) {
+                              meta.put(
+                                  "queryRewrite",
+                                  Map.of(
+                                      "changed", ctx.isRewriteChanged(),
+                                      "costMs", ctx.getRewriteCostMs(),
+                                      "reason", String.valueOf(ctx.getRewriteReason())));
+                            }
+                            if (!docs.isEmpty()) meta.put("references", buildReferences(docs));
+                            if ("llm_direct".equals(source)) {
+                              meta.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
+                            }
+                            if (errorCodeHolder[0] != null) {
+                              meta.put("error", true);
+                              meta.put("errorCode", errorCodeHolder[0]);
+                            }
+                            return Flux.just("[META]" + toJson(meta) + "[/META]");
+                          }))
+                  .onErrorResume(
+                      e -> {
+                        boolean firstByteReceived = !fullAnswer.isEmpty();
+                        String code = classifyStreamError(e, firstByteReceived);
+                        errorCodeHolder[0] = code;
+                        log.error(
+                            "Agent 流式异常 | session={}, code={}, firstByte={}, err={}",
+                            sid,
+                            code,
+                            firstByteReceived,
+                            e.toString());
+                        String fallback = renderStreamErrorMessage(code, firstByteReceived);
+                        fullAnswer.append(fallback);
+                        Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
+                        List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
+                        String src = decideSource(invoked, toolsDisabled);
+                        Map<String, Object> meta = new LinkedHashMap<>();
+                        meta.put("source", src);
+                        meta.put("invokedTools", invoked);
+                        meta.put("hitCount", docs.size());
+                        if (ctx.isRewriteAttempted()) {
+                          meta.put(
+                              "queryRewrite",
+                              Map.of(
+                                  "changed", ctx.isRewriteChanged(),
+                                  "costMs", ctx.getRewriteCostMs(),
+                                  "reason", String.valueOf(ctx.getRewriteReason())));
+                        }
+                        meta.put("error", true);
+                        meta.put("errorCode", code);
+                        if (!docs.isEmpty()) meta.put("references", buildReferences(docs));
+                        return Flux.just(fallback, "[META]" + toJson(meta) + "[/META]");
+                      })
+                  .doOnCancel(() -> log.info("流式被客户端取消 | session={}", sid))
+                  .doFinally(
+                      sig -> {
+                        if (sid == null) return;
+                        String content = cleanAnswer(fullAnswer.toString());
+                        boolean cancelled = sig == reactor.core.publisher.SignalType.CANCEL;
+                        boolean failed = errorCodeHolder[0] != null;
+                        if (content.isBlank() && !cancelled && !failed) {
+                          log.info("流式产出为空（可能仅 think 块），跳过持久化 | session={}", sid);
+                          return;
+                        }
+                        Set<String> invoked = ctx.getInvokedTools();
+                        List<Document> docs = ctx.getRetrievedDocs();
+                        String source = decideSource(invoked, toolsDisabled);
+                        Map<String, Object> metaMap = new LinkedHashMap<>();
+                        metaMap.put(META_KEY_MODE, finalMode);
+                        metaMap.put("source", source);
+                        metaMap.put("invokedTools", invoked);
+                        metaMap.put("hitCount", docs.size());
+                        if (ctx.isRewriteAttempted()) {
+                          metaMap.put(
+                              "queryRewrite",
+                              Map.of(
+                                  "changed", ctx.isRewriteChanged(),
+                                  "costMs", ctx.getRewriteCostMs(),
+                                  "reason", String.valueOf(ctx.getRewriteReason())));
+                        }
+                        if (cancelled) metaMap.put("cancelled", true);
+                        if (failed) {
+                          metaMap.put("error", true);
+                          metaMap.put("errorCode", errorCodeHolder[0]);
+                        }
+                        if (!docs.isEmpty()) {
+                          metaMap.put("references", buildReferences(docs));
+                        }
+                        String meta = toJson(metaMap);
+                        if (cancelled && !content.isEmpty()) {
+                          content = content + "\n\n_[已中断]_";
+                        }
+                        try {
+                          chatHistoryCache.saveMessage(
+                              ChatMessage.of(sid, "assistant", content, meta, userId));
+                        } catch (Exception persistErr) {
+                          log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
+                        }
+                        log.info(
+                            "RAG 请求完成 | session={}, mode={}, source={}, tools={}, hitCount={}, rewriteAttempted={}, rewriteChanged={}, rewriteCostMs={}, rewriteReason={}, cancelled={}, failed={}",
+                            sid,
+                            finalMode,
+                            source,
+                            invoked,
+                            docs.size(),
+                            ctx.isRewriteAttempted(),
+                            ctx.isRewriteChanged(),
+                            ctx.getRewriteCostMs(),
+                            ctx.getRewriteReason(),
+                            cancelled,
+                            failed);
+                      });
             })
-        ;
-    }).subscribeOn(Schedulers.boundedElastic());
+        .subscribeOn(Schedulers.boundedElastic());
   }
 
   // ========================================================================

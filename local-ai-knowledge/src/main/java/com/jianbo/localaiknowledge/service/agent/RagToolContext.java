@@ -1,5 +1,6 @@
 package com.jianbo.localaiknowledge.service.agent;
 
+import com.jianbo.localaiknowledge.service.QueryRewriteService;
 import lombok.Getter;
 import lombok.Setter;
 import org.springframework.ai.document.Document;
@@ -33,6 +34,14 @@ public class RagToolContext {
   @Setter
   private volatile String rewrittenQuery;
 
+  private volatile boolean rewriteAttempted;
+
+  private volatile boolean rewriteChanged;
+
+  private volatile long rewriteCostMs;
+
+  private volatile String rewriteReason;
+
   /** 实际被 LLM 调用过的工具名称（按调用顺序、去重） */
   private final Set<String> invokedTools = Collections.synchronizedSet(new LinkedHashSet<>());
 
@@ -52,6 +61,19 @@ public class RagToolContext {
   public String getSearchQuery(String fallback) {
     String rq = rewrittenQuery;
     return (rq != null && !rq.isBlank()) ? rq : fallback;
+  }
+
+  public void recordRewrite(QueryRewriteService.RewriteResult result) {
+    if (result == null) {
+      return;
+    }
+    rewriteAttempted = result.attempted();
+    rewriteChanged = result.changed();
+    rewriteCostMs = result.costMs();
+    rewriteReason = result.reason();
+    if (result.changed() && result.query() != null && !result.query().isBlank()) {
+      rewrittenQuery = result.query();
+    }
   }
 
   public void recordInvocation(String toolName) {

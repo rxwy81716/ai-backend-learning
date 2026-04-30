@@ -4,7 +4,7 @@
 > 范围：`local-ai-knowledge` 后端 + `local-ai-knowledge-front` 前端
 > 用法：从上往下一项一项做，每完成一项把 `[ ]` 改成 `[x]`，并填实际工时。
 
-**进度**：15 / 20（必修阻塞项全部完成；建议项 已完成；错上添花 #20 已完成）
+**进度**：17 / 22（必修阻塞项全部完成；建议项 已完成；新增 Query Rewrite / Rerank 上线建议与基础可观测性）
 
 ---
 
@@ -507,6 +507,103 @@ Flux.merge(
 
 - [x] 完成 · 实际工时：0.1h
   改动：`RagController` 新增 `normalizeChatMode`：空/缺省 → `KNOWLEDGE`；仅接受 `KNOWLEDGE`/`LLM`（大小写不敏感）；其他招 `IllegalArgumentException`，全局处理器转换为 400。`chat / chatStream` 两个入口同步接入。
+
+---
+
+## 21. Query Rewrite 上线参数建议 ⚪
+
+**预估工时**：0.3h
+
+**目标**
+多轮追问场景下提升召回质量，重点解决“它 / 这个 / 上面说的那个”这类指代问题。
+
+**推荐配置**
+- `app.rag.query-rewrite.enabled=true`
+- `app.rag.query-rewrite.min-history=2`
+- `app.rag.query-rewrite.history-window=6`
+- `app.rag.query-rewrite.timeout-ms=1200`
+- `app.rag.query-rewrite.max-query-length=100`
+
+**上线策略**
+1. 先全量开启 `query-rewrite`
+2. 观察 1~2 天以下日志字段：
+   - `rewriteAttempted`
+   - `rewriteChanged`
+   - `rewriteCostMs`
+   - `rewriteReason`
+3. 若 `timeout` / `error` 比例明显升高，再调低 `history-window` 或 `timeout-ms`
+
+**验收**
+- 多轮问答中“它是谁 / 这个怎么用”类问题命中率提升
+- 首 token 延迟无明显劣化
+- 日志中 `rewriteReason=rewritten` 占比合理，`timeout` 不应长期偏高
+
+- [x] 完成 · 实际工时：0.2h
+  改动：补充 `application.yml` 默认参数；`QueryRewriteService` 增加 `attempted / changed / costMs / reason`；`RagAgentService` 在请求结束日志与 `[META]` 中输出改写结果摘要。
+
+---
+
+## 22. Rerank 灰度上线建议 ⚪
+
+**预估工时**：0.5h
+
+**目标**
+在混合检索召回之后，用 Cross-Encoder 把噪声文档剔掉，提高最终送给 LLM 的上下文纯度。
+
+**推荐配置**
+- `app.rag.rerank.enabled=false`（默认关闭，先灰度）
+- `app.rag.rerank.model=BAAI/bge-reranker-v2-m3`
+- `app.rag.rerank.candidates=20`
+- `app.rag.rerank.top-n=5`
+- `app.rag.rerank.score-threshold=0.1`
+- `app.rag.rerank.timeout-ms=2000`
+- `app.rag.rerank.max-doc-chars=2000`
+
+**灰度策略**
+1. 先在测试/小流量环境开启 `rerank.enabled=true`
+2. 确保 `SILICONFLOW_API_KEY` 已配置，否则会自动降级
+3. 重点观察：
+   - `Hybrid检索 ... rerankApplied=`
+   - `Rerank | candidates / survived / topScores / cost`
+4. 若延迟升高明显，优先调小：
+   - `candidates`
+   - `max-doc-chars`
+   - `timeout-ms`
+
+**验收**
+- `final` 文档数稳定收敛到 `top-n`
+- 长文档场景 hallucination 降低
+- Rerank 超时或无 key 时能平滑降级，不影响主链路
+
+- [x] 完成 · 实际工时：0.3h
+  改动：补充 `application.yml` 默认参数；`RerankService` 增加超时 / 截断 / 自动降级；`HybridSearchService` 与 `RerankService` 增加结构化收益日志。
+
+---
+
+## 23. 基础可观测性（日志级）⚪
+
+**预估工时**：0.5h
+
+**目标**
+在未接入 Micrometer / Prometheus 之前，先用结构化日志完成第一阶段观测。
+
+**当前已落地日志**
+- 请求结束摘要：`session / mode / source / tools / hitCount / rewrite* / cancelled / failed`
+- KB 工具日志：`llmQuery / searchQuery / rewritten / hit / cost`
+- Rerank 日志：`query / candidates / survived / topScores / cost`
+- Hybrid 检索摘要：`query / vector / bm25 / fused / rerankApplied / final / totalCost`
+
+**建议观察口径**
+- Query Rewrite 改写率：`rewriteChanged / rewriteAttempted`
+- Rerank 收缩率：`survived / candidates`
+- 检索命中稳定性：`hitCount` 分布
+- 请求失败率：`failed=true` 占比
+
+**后续演进**
+- 下一步再接 Micrometer，把这些日志字段沉到指标系统中
+
+- [x] 完成 · 实际工时：0.2h
+  改动：后端已补结构化日志，无需前端改动即可开始观测。
 
 ---
 

@@ -126,6 +126,7 @@ public class RerankService {
       }
 
       List<Document> reranked = new ArrayList<>(results.size());
+      List<Double> acceptedScores = new ArrayList<>();
       for (JsonNode item : results) {
         int index = item.get("index").asInt();
         double score = item.get("relevance_score").asDouble();
@@ -139,12 +140,19 @@ public class RerankService {
           Map<String, Object> meta = new HashMap<>(origin.getMetadata());
           meta.put("rerank_score", score);
           reranked.add(new Document(origin.getId(), origin.getText(), meta));
+          acceptedScores.add(score);
         }
       }
 
       long cost = System.currentTimeMillis() - t0;
-      log.info("🎯 Rerank | model={}, candidates={}, survived={}, cost={}ms",
-          model, candidates.size(), reranked.size(), cost);
+      log.info(
+          "🎯 Rerank | model={}, query={}, candidates={}, survived={}, cost={}ms, topScores={}",
+          model,
+          query,
+          candidates.size(),
+          reranked.size(),
+          cost,
+          summarizeScores(acceptedScores));
 
       return reranked.isEmpty()
           ? candidates.subList(0, Math.min(topN, candidates.size()))
@@ -175,5 +183,13 @@ public class RerankService {
                 .build());
     requestFactory.setReadTimeout(Duration.ofMillis(timeoutMs));
     return RestClient.builder().requestFactory(requestFactory).build();
+  }
+
+  private String summarizeScores(List<Double> scores) {
+    if (scores == null || scores.isEmpty()) {
+      return "[]";
+    }
+    int limit = Math.min(3, scores.size());
+    return scores.subList(0, limit).toString();
   }
 }
