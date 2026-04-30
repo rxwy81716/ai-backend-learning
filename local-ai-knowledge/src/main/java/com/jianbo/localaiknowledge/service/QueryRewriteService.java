@@ -9,7 +9,11 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 多轮对话 Query 改写服务。
@@ -32,6 +36,9 @@ import java.util.List;
 @Service
 public class QueryRewriteService {
 
+  public record RewriteResult(
+      String query, boolean attempted, boolean changed, long costMs, String reason) {}
+
   private final ChatModel chatModel;
 
   @Value("${app.rag.query-rewrite.enabled:true}")
@@ -40,6 +47,15 @@ public class QueryRewriteService {
   /** 历史消息条数低于此值时跳过改写（首轮无指代，改写反而引入噪声） */
   @Value("${app.rag.query-rewrite.min-history:2}")
   private int minHistory;
+
+  @Value("${app.rag.query-rewrite.history-window:6}")
+  private int historyWindow;
+
+  @Value("${app.rag.query-rewrite.timeout-ms:1200}")
+  private long timeoutMs;
+
+  @Value("${app.rag.query-rewrite.max-query-length:100}")
+  private int maxQueryLength;
 
   public QueryRewriteService(ChatModel chatModel) {
     this.chatModel = chatModel;
@@ -66,51 +82,74 @@ public class QueryRewriteService {
    * @return 改写后的查询；失败或无需改写时返回原始 question
    */
   public String rewrite(List<Message> history, String question) {
+    return rewriteWithTrace(history, question).query();
+  }
+
+  public RewriteResult rewriteWithTrace(List<Message> history, String question) {
     if (!enabled) {
-      return question;
+      return new RewriteResult(question, false, false, 0L, "disabled");
     }
-    // 历史不足，无需改写
+    if (question == null || question.isBlank()) {
+      return new RewriteResult(question, false, false, 0L, "blank_question");
+    }
     if (history == null || history.size() < minHistory) {
-      return question;
+      return new RewriteResult(question, false, false, 0L, "history_insufficient");
     }
 
     try {
       long t0 = System.currentTimeMillis();
 
       // 构建紧凑的改写 prompt：system + 最近几轮历史 + 当前追问
-      List<Message> messages = new java.util.ArrayList<>();
+      List<Message> messages = new ArrayList<>();
       messages.add(new SystemMessage(REWRITE_SYSTEM_PROMPT));
 
       // 只取最近 6 条历史（3 轮问答），避免 token 浪费
-      int start = Math.max(0, history.size() - 6);
+      int start = Math.max(0, history.size() - historyWindow);
       for (int i = start; i < history.size(); i++) {
         messages.add(history.get(i));
       }
       messages.add(new UserMessage("请将以下追问改写为独立查询：\n" + question));
 
       Prompt prompt = new Prompt(messages);
-      String rewritten = chatModel.call(prompt).getResult().getOutput().getText();
+      String rewritten =
+          CompletableFuture.supplyAsync(() -> chatModel.call(prompt).getResult().getOutput().getText())
+              .get(timeoutMs, TimeUnit.MILLISECONDS);
+      long cost = System.currentTimeMillis() - t0;
 
       if (rewritten == null || rewritten.isBlank()) {
         log.warn("Query 改写返回空，回退原始 query");
-        return question;
+        return new RewriteResult(question, true, false, cost, "empty_result");
       }
 
-      rewritten = rewritten.trim();
-      // 去掉 LLM 可能加的引号
-      if ((rewritten.startsWith("\"") && rewritten.endsWith("\""))
-          || (rewritten.startsWith("「") && rewritten.endsWith("」"))) {
-        rewritten = rewritten.substring(1, rewritten.length() - 1).trim();
+      rewritten = normalizeQuery(rewritten);
+      if (rewritten.isBlank() || rewritten.length() > maxQueryLength) {
+        log.warn("Query 改写结果异常，回退原始 query | rewritten={}", rewritten);
+        return new RewriteResult(question, true, false, cost, "invalid_result");
       }
 
-      long cost = System.currentTimeMillis() - t0;
-      log.info("🔄 Query 改写 | cost={}ms | original=[{}] → rewritten=[{}]",
-          cost, question, rewritten);
-
-      return rewritten;
+      if (rewritten.equals(question)) {
+        log.debug("Query 无需改写 | cost={}ms | query=[{}]", cost, question);
+        return new RewriteResult(question, true, false, cost, "unchanged");
+      } else {
+        log.info("🔄 Query 改写 | cost={}ms | original=[{}] → rewritten=[{}]",
+            cost, question, rewritten);
+        return new RewriteResult(rewritten, true, true, cost, "rewritten");
+      }
+    } catch (TimeoutException e) {
+      log.warn("Query 改写超时 {}ms，回退原始 query", timeoutMs);
+      return new RewriteResult(question, true, false, timeoutMs, "timeout");
     } catch (Exception e) {
       log.warn("Query 改写失败，回退原始 query | err={}", e.getMessage());
-      return question;
+      return new RewriteResult(question, true, false, 0L, "error");
     }
+  }
+
+  private String normalizeQuery(String query) {
+    String normalized = query == null ? "" : query.trim().replaceAll("\\s+", " ");
+    if ((normalized.startsWith("\"") && normalized.endsWith("\""))
+        || (normalized.startsWith("「") && normalized.endsWith("」"))) {
+      normalized = normalized.substring(1, normalized.length() - 1).trim();
+    }
+    return normalized;
   }
 }

@@ -122,7 +122,11 @@ public class HybridSearchService {
     String q =
         query == null ? "" : query.trim().toLowerCase().replaceAll("\\s+", " ");
     String u = (userId == null || userId.isBlank()) ? "_anon_" : userId;
-    return u + "|" + topK + "|" + q;
+    String rerankSig =
+        rerankService.isEnabled()
+            ? ("rerank:on:" + rerankCandidates + ":" + topK)
+            : "rerank:off";
+    return u + "|" + topK + "|" + rerankSig + "|" + q;
   }
 
   private List<Document> doSearchWithOwnership(String query, String userId, int topK) {

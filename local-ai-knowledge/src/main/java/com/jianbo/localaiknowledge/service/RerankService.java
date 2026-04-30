@@ -11,6 +11,8 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -37,7 +39,6 @@ import java.util.Map;
 @Service
 public class RerankService {
 
-  private final RestClient restClient;
   private final ObjectMapper objectMapper;
 
   @Value("${app.rag.rerank.enabled:false}")
@@ -58,15 +59,18 @@ public class RerankService {
   @Value("${app.embedding.siliconflow.api-key:${SILICONFLOW_API_KEY:}}")
   private String apiKey;
 
+  @Value("${app.rag.rerank.timeout-ms:2000}")
+  private long timeoutMs;
+
+  @Value("${app.rag.rerank.max-doc-chars:2000}")
+  private int maxDocChars;
+
   public RerankService(ObjectMapper objectMapper) {
     this.objectMapper = objectMapper;
-    this.restClient = RestClient.builder()
-        .requestFactory(new JdkClientHttpRequestFactory())
-        .build();
   }
 
   public boolean isEnabled() {
-    return enabled;
+    return enabled && apiKey != null && !apiKey.isBlank();
   }
 
   /**
@@ -78,10 +82,17 @@ public class RerankService {
    * @return 按 relevance_score 倒序的 top-N 文档（metadata 中追加 rerank_score）
    */
   public List<Document> rerank(String query, List<Document> candidates, int topN) {
-    if (!enabled || candidates == null || candidates.isEmpty()) {
+    if (candidates == null || candidates.isEmpty()) {
       return candidates;
     }
     if (topN <= 0) topN = defaultTopN;
+    if (!enabled) {
+      return candidates.subList(0, Math.min(topN, candidates.size()));
+    }
+    if (apiKey == null || apiKey.isBlank()) {
+      log.warn("Rerank 已启用但缺少 API Key，降级返回原始排序");
+      return candidates.subList(0, Math.min(topN, candidates.size()));
+    }
 
     try {
       long t0 = System.currentTimeMillis();
@@ -89,7 +100,7 @@ public class RerankService {
       // 构建请求体
       List<String> docTexts = new ArrayList<>(candidates.size());
       for (Document doc : candidates) {
-        docTexts.add(doc.getText());
+        docTexts.add(truncateDoc(doc.getText()));
       }
 
       Map<String, Object> requestBody = new HashMap<>();
@@ -99,7 +110,7 @@ public class RerankService {
       requestBody.put("top_n", Math.min(topN, candidates.size()));
       requestBody.put("return_documents", false);
 
-      String responseStr = restClient.post()
+      String responseStr = createRestClient().post()
           .uri(apiUrl)
           .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
           .contentType(MediaType.APPLICATION_JSON)
@@ -143,5 +154,26 @@ public class RerankService {
       log.warn("Rerank 调用失败，降级返回原始排序 | err={}", e.getMessage());
       return candidates.subList(0, Math.min(topN, candidates.size()));
     }
+  }
+
+  private String truncateDoc(String text) {
+    if (text == null) {
+      return "";
+    }
+    String normalized = text.replaceAll("\\s+", " ").trim();
+    if (normalized.length() <= maxDocChars) {
+      return normalized;
+    }
+    return normalized.substring(0, maxDocChars);
+  }
+
+  private RestClient createRestClient() {
+    JdkClientHttpRequestFactory requestFactory =
+        new JdkClientHttpRequestFactory(
+            HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(Math.min(timeoutMs, 2000)))
+                .build());
+    requestFactory.setReadTimeout(Duration.ofMillis(timeoutMs));
+    return RestClient.builder().requestFactory(requestFactory).build();
   }
 }

@@ -97,6 +97,21 @@ app:
       rrf-k: 60                       # RRF 平滑常数（论文推荐 60）
       parallel-timeout-ms: 3000       # 双路并发超时
       similarity-threshold: 0.25      # 向量召回最低相似度
+    query-rewrite:
+      enabled: true                   # 多轮对话 query 改写（指代消解 / 省略补全）
+      min-history: 2                  # 至少有 2 条历史消息才触发改写
+      history-window: 6               # 仅取最近 6 条历史（约 3 轮问答）
+      timeout-ms: 1200                # 改写超时即回退原始 query，避免拖慢首 token
+      max-query-length: 100           # 改写结果最大长度，超出视为异常回退
+    rerank:
+      enabled: false                  # 生产建议灰度开启；需配置 SiliconFlow API Key
+      model: BAAI/bge-reranker-v2-m3
+      candidates: 20                  # RRF 先取前 20 篇候选，再交给 Cross-Encoder 精排
+      top-n: 5                        # 最终保留前 5 篇给 LLM 作为上下文
+      score-threshold: 0.1            # 低于该分数视为弱相关，直接丢弃
+      timeout-ms: 2000                # Rerank 超时即降级，不阻断主检索链
+      max-doc-chars: 2000             # 单文档送 rerank 的最大字符数，控制成本与延迟
+      api-url: https://api.siliconflow.cn/v1/rerank
   # Embedding 始终走硅基流动 bge-m3（1024 维，OpenAI 兼容协议）
   embedding:
     siliconflow:

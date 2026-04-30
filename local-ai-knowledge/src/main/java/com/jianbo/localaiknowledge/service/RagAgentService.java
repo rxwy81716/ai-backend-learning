@@ -211,49 +211,50 @@ public class RagAgentService {
       String promptName,
       String chatMode,
       boolean thinking) {
-    String mode = normalizeMode(chatMode);
-    boolean toolsDisabled = MODE_LLM.equals(mode);
-    String basePrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
-    String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
-    List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
+    return Flux.defer(() -> {
+      String mode = normalizeMode(chatMode);
+      boolean toolsDisabled = MODE_LLM.equals(mode);
+      String basePrompt = toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
+      String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
+      List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
 
-    if (sessionId != null) {
-      String userMeta = toJson(Map.of(META_KEY_MODE, mode));
-      chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, userMeta, userId));
-    }
+      if (sessionId != null) {
+        String userMeta = toJson(Map.of(META_KEY_MODE, mode));
+        chatHistoryCache.saveMessage(ChatMessage.of(sessionId, "user", question, userMeta, userId));
+      }
 
-    StringBuilder fullAnswer = new StringBuilder();
+      StringBuilder fullAnswer = new StringBuilder();
 
-    // Spring AI 2.x 原生 ToolContext：跨线程安全传递，不依赖 ThreadLocal
-    final RagToolContext ctx = RagToolContext.create(userId);
+      // Spring AI 2.x 原生 ToolContext：跨线程安全传递，不依赖 ThreadLocal
+      final RagToolContext ctx = RagToolContext.create(userId);
 
-    // Query Rewriting：多轮对话时将指代/省略改写为独立检索 query
-    if (!toolsDisabled) {
-      List<Message> historyOnly = messages.stream()
-          .filter(m -> !(m instanceof org.springframework.ai.chat.messages.SystemMessage))
-          .toList();
-      // historyOnly 的最后一条是当前 question，去掉后传给 rewrite
-      if (historyOnly.size() > 1) {
-        List<Message> prevHistory = historyOnly.subList(0, historyOnly.size() - 1);
-        String rewritten = queryRewriteService.rewrite(prevHistory, question);
-        if (!rewritten.equals(question)) {
-          ctx.setRewrittenQuery(rewritten);
+      // Query Rewriting：多轮对话时将指代/省略改写为独立检索 query
+      if (!toolsDisabled) {
+        List<Message> historyOnly = messages.stream()
+            .filter(m -> !(m instanceof org.springframework.ai.chat.messages.SystemMessage))
+            .toList();
+        // historyOnly 的最后一条是当前 question，去掉后传给 rewrite
+        if (historyOnly.size() > 1) {
+          List<Message> prevHistory = historyOnly.subList(0, historyOnly.size() - 1);
+          String rewritten = queryRewriteService.rewrite(prevHistory, question);
+          if (!rewritten.equals(question)) {
+            ctx.setRewrittenQuery(rewritten);
+          }
         }
       }
-    }
 
-    ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
-    if (!toolsDisabled) {
-      spec = spec.tools(ragTools).toolContext(Map.of(RagTools.CTX_KEY, ctx));
-    }
+      ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
+      if (!toolsDisabled) {
+        spec = spec.tools(ragTools).toolContext(Map.of(RagTools.CTX_KEY, ctx));
+      }
 
-    final String sid = sessionId;
-    final String finalMode = mode;
-    // 流级错误状态：onErrorResume 写入，doFinally 持久化时读取，避免兜底文本被当作正常回答。
-    final String[] errorCodeHolder = new String[1];
-    // 状态机：跨 chunk 跟踪 <think>...</think> 边界，实时丢弃思考块与首部空白
-    final ThinkBlockStripper stripper = new ThinkBlockStripper();
-    return spec.stream()
+      final String sid = sessionId;
+      final String finalMode = mode;
+      // 流级错误状态：onErrorResume 写入，doFinally 持久化时读取，避免兜底文本被当作正常回答。
+      final String[] errorCodeHolder = new String[1];
+      // 状态机：跨 chunk 跟踪 <think>...</think> 边界，实时丢弃思考块与首部空白
+      final ThinkBlockStripper stripper = new ThinkBlockStripper();
+      return spec.stream()
         .content()
         // 双段超时：
         //   1) 首字节超时：从订阅起 15s 内必须收到第一个 chunk，否则视为上游卡死；
@@ -364,7 +365,8 @@ public class RagAgentService {
                 log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
               }
             })
-        .subscribeOn(Schedulers.boundedElastic());
+        ;
+    }).subscribeOn(Schedulers.boundedElastic());
   }
 
   // ========================================================================
