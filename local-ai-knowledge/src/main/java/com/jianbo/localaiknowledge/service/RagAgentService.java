@@ -213,24 +213,37 @@ public class RagAgentService {
       String promptName,
       String chatMode,
       boolean thinking) {
+    // 1. 构建消息列表
+    //  2. 调用流式接口
     return Flux.defer(
             () -> {
+              // 1. 构建消息列表
               String mode = normalizeMode(chatMode);
+              // 2. 判断工具是否禁用
               boolean toolsDisabled = MODE_LLM.equals(mode);
+              // 3. 构建系统提示
               String basePrompt =
                   toolsDisabled ? LLM_DIRECT_PROMPT : resolveAgentSystemPrompt(promptName);
+              // 4. 构建系统提示
               String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
+              // 5. 构建消息列表
               List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
 
+              // 5. 保存用户消息
               if (sessionId != null) {
+                // 保存用户消息
                 String userMeta = toJson(Map.of(META_KEY_MODE, mode));
+                // 保存用户消息
                 chatHistoryCache.saveMessage(
                     ChatMessage.of(sessionId, "user", question, userMeta, userId));
               }
 
+              // 6. 构建工具调用上下文
               StringBuilder fullAnswer = new StringBuilder();
+              // 6.1 构建工具调用上下文
               final RagToolContext ctx = RagToolContext.create(userId);
 
+              // 6.2 重写查询
               if (!toolsDisabled) {
                 List<Message> historyOnly =
                     messages.stream()
@@ -244,23 +257,30 @@ public class RagAgentService {
                 }
               }
 
+              // 7. 构建流式接口
               ChatClient.ChatClientRequestSpec spec = chatClient.prompt().messages(messages);
               if (!toolsDisabled) {
                 spec = spec.tools(ragTools).toolContext(Map.of(RagTools.CTX_KEY, ctx));
               }
 
+              // 8. 构建流式接口
               final String sid = sessionId;
+              // 9.1 处理流式接口返回结果
               final String finalMode = mode;
+              // 9.2 处理流式接口返回结果
               final String[] errorCodeHolder = new String[1];
+              // 9.3 处理流式接口返回结果
               final ThinkBlockStripper stripper = new ThinkBlockStripper();
               return spec.stream()
                   .content()
                   .timeout(
+                          // 超时时间
                       reactor.core.publisher.Mono.delay(
                           Duration.ofSeconds(STREAM_FIRST_BYTE_TIMEOUT_SECONDS)),
                       ignored ->
                           reactor.core.publisher.Mono.delay(
                               Duration.ofSeconds(STREAM_IDLE_TIMEOUT_SECONDS)))
+                      //
                   .map(stripper::process)
                   .concatWith(
                       Flux.defer(

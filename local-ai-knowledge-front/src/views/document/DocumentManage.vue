@@ -335,15 +335,25 @@ const handleReparse = async (row: DocumentTask) => {
   }
 }
 
-// 下载文档
-const handleDownload = (row: DocumentTask) => {
-  const url = getDownloadUrl(row.taskId)
-  const token = localStorage.getItem('token')
-  // 使用隐藏a标签下载，带token认证
-  const link = document.createElement('a')
-  link.href = `${url}?token=${token}`
-  link.target = '_blank'
-  link.click()
+// 下载文档（通过 Blob 方式，token 放请求头而非 URL，避免泄露）
+const handleDownload = async (row: DocumentTask) => {
+  try {
+    const url = getDownloadUrl(row.taskId)
+    const token = localStorage.getItem('token')
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (!response.ok) throw new Error('下载失败')
+    const blob = await response.blob()
+    const blobUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = blobUrl
+    link.download = row.fileName || 'download'
+    link.click()
+    URL.revokeObjectURL(blobUrl)
+  } catch (error: any) {
+    ElMessage.error(error.message || '下载失败')
+  }
 }
 
 // 删除文档

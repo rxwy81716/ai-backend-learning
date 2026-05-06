@@ -32,11 +32,11 @@ public class HotItemRepository {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     /**
-     * 批量保存热榜条目（冲突时跳过，不重复入库）
+     * 批量保存热榜条目（冲突时更新 crawl_time 等字段，保证每日热榜可见）
      *
      * @param items  清洗后的条目列表
      * @param source 数据来源
-     * @return 实际新增行数
+     * @return 实际写入/更新行数
      */
     public int batchSave(List<HotItem> items, CrawlSource source) {
         if (items == null || items.isEmpty()) return 0;
@@ -44,10 +44,16 @@ public class HotItemRepository {
         String sql = """
                 INSERT INTO crawler_hot_item (source, title, content, url, rank, hot_score, metadata, crawl_date, crawl_time)
                 VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?)
-                ON CONFLICT (crawl_date, source, title) DO NOTHING
+                ON CONFLICT (crawl_date, source, title) DO UPDATE SET
+                    crawl_time = EXCLUDED.crawl_time,
+                    rank       = EXCLUDED.rank,
+                    hot_score  = EXCLUDED.hot_score,
+                    content    = EXCLUDED.content,
+                    url        = EXCLUDED.url,
+                    metadata   = EXCLUDED.metadata
                 """;
 
-        int inserted = 0;
+        int affected = 0;
         for (HotItem item : items) {
             try {
                 int rows = jdbcTemplate.update(sql,
@@ -61,15 +67,15 @@ public class HotItemRepository {
                         Date.valueOf(LocalDate.now()),
                         Timestamp.valueOf(item.crawlTime())
                 );
-                inserted += rows;
+                affected += rows;
             } catch (Exception e) {
                 log.warn("保存热榜条目失败：source={}, title={}, error={}",
                         source.name(), item.title(), e.getMessage());
             }
         }
 
-        log.info("热榜持久化：{} | 提交 {} 条 → 新增 {} 条", source.getDisplayName(), items.size(), inserted);
-        return inserted;
+        log.info("热榜持久化：{} | 提交 {} 条 → 写入/更新 {} 条", source.getDisplayName(), items.size(), affected);
+        return affected;
     }
 
     /** Map → JSON 字符串 */

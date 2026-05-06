@@ -14,6 +14,16 @@ spring:
     url: ${DB_URL:jdbc:postgresql://101.132.182.160:5432/ai_knowledge}
     username: ${DB_USERNAME:jianbo}
     password: ${DB_PASSWORD:525826}
+    hikari:
+      # 公网 PG：中间网络/PG 自身可能在 5~10min 内回收 idle，HikariCP 默认 30min
+      # 容易拿到死连接报 "This connection has been closed."。把生命周期压短到 5min，
+      # 比中间链路更早主动关掉，可避免上述告警。
+      max-lifetime: 300000          # 5 分钟（必须 < PG/网关 idle 超时）
+      idle-timeout: 180000          # 3 分钟空闲即归还
+      keepalive-time: 120000        # 2 分钟做一次 connectionTestQuery，链路探活
+      connection-test-query: SELECT 1
+      minimum-idle: 2
+      maximum-pool-size: 10
 
   # ===== Redis（Redisson BloomFilter 持久化去重） =====
   data:

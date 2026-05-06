@@ -37,7 +37,7 @@
 
         <el-form-item>
           <div class="form-options">
-            <el-checkbox v-model="form.remember">记住密码</el-checkbox>
+            <el-checkbox v-model="form.remember">记住用户名</el-checkbox>
             <router-link to="/register" class="register-link">注册账号</router-link>
           </div>
         </el-form-item>
@@ -87,12 +87,11 @@ const rules: FormRules = {
   ]
 }
 
-// 加载记住的账号密码
+// 加载记住的用户名
 onMounted(() => {
   const saved = storage.getRemember()
   if (saved) {
     form.username = saved.username || ''
-    form.password = saved.password || ''
     form.remember = saved.remember || false
   }
 })
@@ -111,11 +110,10 @@ const handleLogin = async () => {
         password: form.password
       })
 
-      // 记住密码
+      // 记住用户名（不存储密码）
       if (form.remember) {
         storage.setRemember({
           username: form.username,
-          password: form.password,
           remember: true
         })
       } else {

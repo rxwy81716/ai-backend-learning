@@ -113,19 +113,8 @@ public class CrawlPipelineService {
             }
             log.info("  ✓ 采集完成：{} 条", crawlResult.items().size());
 
-            // ===== Step 2: BloomFilter 去重 =====
-            List<HotItem> newItems = bloomFilterService.filterDuplicates(crawlResult.items());
-            if (newItems.isEmpty()) {
-                log.info("  ✓ 全部为重复数据，跳过后续步骤");
-                long cost0 = System.currentTimeMillis() - pipelineStart;
-                PipelineResult dup = new PipelineResult(source, true, crawlResult.items().size(), 0, cost0, triggerType, "全部重复");
-                saveLog(dup);
-                return dup;
-            }
-            log.info("  ✓ 去重完成：新增 {} 条", newItems.size());
-
-            // ===== Step 3: 数据清洗 =====
-            List<HotItem> cleanedItems = dataCleanService.cleanAll(newItems);
+            // ===== Step 2: 数据清洗（全量） =====
+            List<HotItem> cleanedItems = dataCleanService.cleanAll(crawlResult.items());
             if (cleanedItems.isEmpty()) {
                 log.info("  ✓ 清洗后无有效数据");
                 long cost1 = System.currentTimeMillis() - pipelineStart;
@@ -135,18 +124,23 @@ public class CrawlPipelineService {
             }
             log.info("  ✓ 清洗完成：有效 {} 条", cleanedItems.size());
 
-            // ===== Step 4: 持久化到数据库（每日热榜统计） =====
-            int dbInserted = hotItemRepository.batchSave(cleanedItems, source);
-            log.info("  ✓ 数据库持久化：新增 {} 条", dbInserted);
+            // ===== Step 3: 持久化到数据库（INSERT + 去重更新 crawl_time） =====
+            // 全量 upsert：新条目插入，已存在条目更新 crawl_time/rank/hot_score 等
+            int dbAffected = hotItemRepository.batchSave(cleanedItems, source);
+            log.info("  ✓ 数据库持久化：写入/更新 {} 条", dbAffected);
 
-            // ===== Step 5: 标记已处理（写入布隆过滤器） =====
+            // ===== Step 4: BloomFilter 识别新增条目 =====
+            List<HotItem> newItems = bloomFilterService.filterDuplicates(cleanedItems);
+            log.info("  ✓ BloomFilter 识别：新增 {} 条，重复 {} 条", newItems.size(), cleanedItems.size() - newItems.size());
+
+            // ===== Step 5: 标记新增条目到布隆过滤器 =====
             // 热榜数据只存 hot_items 表，不入知识库向量化
             // （热榜是高频时效数据，入 RAG 会干扰正常问答且检索效果差）
-            bloomFilterService.markAsProcessed(cleanedItems);
+            bloomFilterService.markAsProcessed(newItems);
 
             long totalCost = System.currentTimeMillis() - pipelineStart;
-            log.info("◆ 流水线完成：{} | 采集 {} → 新增 {} → 入库 | 耗时 {}ms",
-                    source.getDisplayName(), crawlResult.items().size(), cleanedItems.size(), totalCost);
+            log.info("◆ 流水线完成：{} | 采集 {} → 清洗 {} → 入库/更新 {} → 新增 {} | 耗时 {}ms",
+                    source.getDisplayName(), crawlResult.items().size(), cleanedItems.size(), dbAffected, newItems.size(), totalCost);
 
             PipelineResult ok = new PipelineResult(source, true, crawlResult.items().size(), cleanedItems.size(), totalCost, triggerType, null);
             saveLog(ok);

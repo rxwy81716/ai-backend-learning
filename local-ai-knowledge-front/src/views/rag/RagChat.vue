@@ -73,10 +73,21 @@
 
         <!-- 消息列表 -->
         <div class="message-list" ref="messageListRef">
-          <div class="welcome-message">
+          <div v-if="messages.length === 0" class="welcome-message">
             <el-icon class="welcome-icon" :size="48"><ChatDotRound /></el-icon>
             <h3>欢迎使用智能问答</h3>
             <p>我可以帮您基于知识库回答问题，支持网络搜索降级</p>
+            <div class="example-questions">
+              <div
+                v-for="(eq, idx) in exampleQuestions"
+                :key="idx"
+                class="example-card"
+                @click="askExample(eq)"
+              >
+                <el-icon><Promotion /></el-icon>
+                <span>{{ eq }}</span>
+              </div>
+            </div>
           </div>
 
           <template v-for="(msg, index) in messages" :key="index">
@@ -300,7 +311,6 @@ import {
   Fold,
   UserFilled,
   ChatDotRound,
-  Promotion,
   DocumentCopy,
   Collection,
   Document,
@@ -308,7 +318,8 @@ import {
   CircleClose,
   Refresh,
   CaretTop,
-  CaretBottom
+  CaretBottom,
+  Promotion
 } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
 
@@ -319,6 +330,20 @@ const md = new MarkdownIt({
   breaks: true,
   typographer: false
 })
+
+// 示例问题
+const exampleQuestions = [
+  '帮我总结一下知识库中的核心内容',
+  '这些文档里提到了哪些关键概念？',
+  '根据文档内容，给我一些建议',
+  '帮我对比文档中不同方案的优缺点'
+]
+
+// 点击示例问题
+const askExample = (q: string) => {
+  question.value = q
+  handleSend()
+}
 
 // 移动端默认折叠历史面板
 const isHistoryCollapsed = ref(window.innerWidth <= 768)
@@ -642,18 +667,6 @@ const handleFeedback = async (msg: StreamChatMessage, rating: 1 | -1) => {
   }
 }
 
-// HTML转义（防止XSS）
-const escapeHtml = (text: string) => {
-  const map: Record<string, string> = {
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;'
-  }
-  return text.replace(/[&<>"']/g, (m) => map[m])
-}
-
 // 格式化消息：用 markdown-it 渲染完整 Markdown（列表、标题、表格、链接、代码块等全支持）。
 // html: false 已防 XSS；用户消息也走渲染器以保持一致体验（用户输入若含 < 会被自动转义）。
 const formatMessage = (content: string) => md.render(content || '')
@@ -846,6 +859,40 @@ onMounted(() => {
 .welcome-message p {
   margin: 0;
   font-size: 14px;
+}
+
+.example-questions {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 24px;
+  max-width: 560px;
+}
+
+.example-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #606266;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.example-card:hover {
+  background: #ecf5ff;
+  border-color: #409eff;
+  color: #409eff;
+}
+
+.example-card .el-icon {
+  flex-shrink: 0;
+  color: #409eff;
 }
 
 .message-item {
@@ -1317,6 +1364,11 @@ onMounted(() => {
 
   .welcome-message h3 {
     font-size: 18px;
+  }
+
+  .example-questions {
+    grid-template-columns: 1fr;
+    max-width: 100%;
   }
 }
 </style>
