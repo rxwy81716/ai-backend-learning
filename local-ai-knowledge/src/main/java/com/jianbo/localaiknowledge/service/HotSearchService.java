@@ -6,8 +6,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 热搜智能查询服务（RAG Agent 路由用）
@@ -91,6 +94,9 @@ public class HotSearchService {
       return "暂无热榜数据。爬虫可能还未采集今日数据。";
     }
 
+    // 按 title 去重（爬虫可能多次采集同一条目）
+    items = dedup(items);
+
     return formatAsContext(items, targetSource);
   }
 
@@ -147,5 +153,18 @@ public class HotSearchService {
     }
 
     return sb.toString();
+  }
+
+  /** 按 title 去重，保留首次出现的条目（rank 更小的） */
+  private List<Map<String, Object>> dedup(List<Map<String, Object>> items) {
+    Set<String> seen = new LinkedHashSet<>();
+    List<Map<String, Object>> result = new ArrayList<>();
+    for (Map<String, Object> item : items) {
+      String title = String.valueOf(item.getOrDefault("title", ""));
+      if (seen.add(title)) {
+        result.add(item);
+      }
+    }
+    return result;
   }
 }

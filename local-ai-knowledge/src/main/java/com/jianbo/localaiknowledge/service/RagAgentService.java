@@ -14,7 +14,7 @@ import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.document.Document;
-import org.springframework.stereotype.Service;
+
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -50,7 +50,7 @@ import java.util.regex.Pattern;
  *   <li>{@code LLM}：禁用所有工具，强制 LLM 直答（用户主动选择，作为逃生口）
  * </ul>
  */
-@Service
+@Deprecated(forRemoval = true)
 @Slf4j
 @RequiredArgsConstructor
 public class RagAgentService {

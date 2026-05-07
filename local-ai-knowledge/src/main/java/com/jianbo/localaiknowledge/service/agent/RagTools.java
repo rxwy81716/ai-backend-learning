@@ -26,7 +26,7 @@ import java.util.Map;
  *   <li>所有工具返回 {@code String}，同时把命中文档/调用记录写回 {@link RagToolContext}， 供外层构建响应元数据 source / references
  * </ul>
  */
-@Component
+@Deprecated(forRemoval = true)
 @Slf4j
 @RequiredArgsConstructor
 public class RagTools {

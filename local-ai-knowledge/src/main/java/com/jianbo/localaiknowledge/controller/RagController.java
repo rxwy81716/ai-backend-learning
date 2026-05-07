@@ -6,7 +6,7 @@ import com.jianbo.localaiknowledge.model.ChatMessage;
 import com.jianbo.localaiknowledge.model.ChatSession;
 import com.jianbo.localaiknowledge.model.SystemPrompt;
 import com.jianbo.localaiknowledge.service.ChatHistoryCacheService;
-import com.jianbo.localaiknowledge.service.RagAgentService;
+import com.jianbo.localaiknowledge.service.agent.MultiAgentOrchestrator;
 import com.jianbo.localaiknowledge.service.SystemPromptService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +38,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class RagController {
 
-  private final RagAgentService ragAgentService;
+  private final MultiAgentOrchestrator multiAgentOrchestrator;
   private final ChatConversationMapper conversationMapper;
   private final ChatHistoryCacheService chatHistoryCache;
   private final SystemPromptService promptService;
@@ -72,7 +72,7 @@ public class RagController {
     String chatMode = normalizeChatMode(body.get("chatMode"));
     boolean thinking = parseThinking(body);
 
-    return ragAgentService.chatStream(
+    return multiAgentOrchestrator.chatStream(
         sessionId, question, userId, promptName, chatMode, thinking);
   }
 
