@@ -16,6 +16,9 @@ public enum AgentType {
   /** 文档概览：遍历所有文档并综合总结 */
   DOCUMENT_OVERVIEW("knowledge_base"),
 
+  /** 文档内搜索：在知识库文档中全文检索指定关键词，定位具体文档 */
+  DOCUMENT_SEARCH("knowledge_base"),
+
   /** 通用对话：无工具，基于 LLM 自身知识直接回答 */
   CHAT("llm_direct");
 

@@ -26,7 +26,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 /**
- * 多 Agent 调度器：替代原 {@code RagAgentService}。
+ * 多 Agent 调度器。
  *
  * <p>职责划分：
  * <ul>
@@ -63,7 +63,7 @@ public class MultiAgentOrchestrator {
   private static final String META_KEY_MODE = "chatMode";
   private static final String NO_THINK_PREFIX = "/no_think\n";
 
-  // ========== 后处理正则（从 RagAgentService 迁移） ==========
+  // ========== 后处理正则 ==========
   private static final Pattern THINK_BLOCK = Pattern.compile("<think>.*?</think>", Pattern.DOTALL);
   private static final Pattern MULTI_NEWLINE = Pattern.compile("\\n{3,}");
   private static final Pattern META_BLOCK_LINE =
@@ -82,6 +82,21 @@ public class MultiAgentOrchestrator {
               + "[^\\n。！？]{0,80}?"
               + "[。！？\\n]\\s*",
           Pattern.UNICODE_CASE);
+
+  // ========== 追问检测 ==========
+
+  /** 追问关键词：序数引用 + 追问动作 */
+  private static final Pattern FOLLOW_UP_PATTERN = Pattern.compile(
+      "第[一二三四五六七八九十\\d]+[个篇份条段章]|"
+          + "刚才|刚刚|前面|上面|之前|上次|上一个|"
+          + "详细说说|展开讲讲|具体说说|再详细|多说点|"
+          + "继续说|接着说|然后呢|还有呢|"
+          + "这个文档|那个文档|这篇|那篇|"
+          + "总结一下|概括一下|归纳一下",
+      Pattern.UNICODE_CASE);
+
+  /** 追问问题最大长度（超过此长度视为独立新问题） */
+  private static final int FOLLOW_UP_MAX_LENGTH = 30;
 
   public MultiAgentOrchestrator(
       ChatHistoryCacheService chatHistoryCache,
@@ -151,6 +166,16 @@ public class MultiAgentOrchestrator {
               StringBuilder fullAnswer = new StringBuilder();
               final RagToolContext ctx = RagToolContext.create(userId);
 
+              // 6a. 追问检测：注入上文 context
+              String followUpContext = null;
+              if (sessionId != null && isFollowUp(question)) {
+                followUpContext = loadLastAssistantContent(sessionId, mode);
+                if (followUpContext != null) {
+                  log.info("[追问检测] 检测到追问，注入上文 {} 字符 | session={}, question={}",
+                      followUpContext.length(), sessionId, question);
+                }
+              }
+
               if (!forceLlm && intent == AgentType.KNOWLEDGE) {
                 List<Message> historyOnly = messages.stream()
                     .filter(m -> !(m instanceof SystemMessage))
@@ -164,6 +189,12 @@ public class MultiAgentOrchestrator {
               }
 
               // 7. 构建 AgentRequest 并执行
+              // 7a. 追问上下文注入：在上一条用户消息前插入上文
+              if (followUpContext != null) {
+                messages.add(messages.size() - 1,
+                    new SystemMessage("【对话上文（用户正在追问此内容）】\n" + followUpContext
+                        + "\n\n用户正在基于以上内容进行追问，请结合上下文理解用户的指代（如'第一个文档''刚才那个'等）。"));
+              }
               AgentRequest request = new AgentRequest(
                   sessionId, question, userId, messages, ctx, thinking);
 
@@ -245,12 +276,12 @@ public class MultiAgentOrchestrator {
 
     // source 标识逻辑：
     //  - 强制 LLM 模式 / 无工具调用：llm_direct
-    //  - KNOWLEDGE Agent：需要有 docs 命中才算 knowledge_base，否则 llm_direct
+    //  - KNOWLEDGE / DOCUMENT_OVERVIEW：需要有 docs 命中才算 knowledge_base，否则 llm_direct
     //  - 其他 Agent（如 HOT_SEARCH）：只要调用了工具即用 agent sourceTag
     String source;
     if (forceLlm || invoked.isEmpty()) {
       source = "llm_direct";
-    } else if (intent == AgentType.KNOWLEDGE && docs.isEmpty()) {
+    } else if ((intent == AgentType.KNOWLEDGE || intent == AgentType.DOCUMENT_OVERVIEW || intent == AgentType.DOCUMENT_SEARCH) && docs.isEmpty()) {
       source = "llm_direct";
     } else {
       source = intent.sourceTag();
@@ -322,6 +353,29 @@ public class MultiAgentOrchestrator {
 
   private static String normalizeMode(String chatMode) {
     return MODE_LLM.equalsIgnoreCase(chatMode) ? MODE_LLM : MODE_KNOWLEDGE;
+  }
+
+  /** 判断是否为追问：短问题 + 包含序数引用或追问动作词 */
+  private boolean isFollowUp(String question) {
+    if (question == null || question.isBlank()) return false;
+    if (question.length() > FOLLOW_UP_MAX_LENGTH) return false;
+    return FOLLOW_UP_PATTERN.matcher(question).find();
+  }
+
+  /** 加载最近一条 assistant 消息内容，用于追问上下文注入 */
+  private String loadLastAssistantContent(String sessionId, String mode) {
+    List<ChatMessage> history = chatHistoryCache.loadRecentHistory(sessionId, 5);
+    for (int i = history.size() - 1; i >= 0; i--) {
+      ChatMessage msg = history.get(i);
+      if ("assistant".equals(msg.getRole()) && isSameMode(msg, mode)) {
+        String content = msg.getContent();
+        if (content != null && !content.isBlank()) {
+          // 截取前 2000 字符，避免撑爆上下文
+          return content.length() > 2000 ? content.substring(0, 2000) : content;
+        }
+      }
+    }
+    return null;
   }
 
   private boolean isSameMode(ChatMessage msg, String currentMode) {

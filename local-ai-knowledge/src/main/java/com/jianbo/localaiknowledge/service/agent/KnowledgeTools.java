@@ -13,9 +13,6 @@ import java.util.List;
 
 /**
  * 知识库 Agent 专用工具：从企业私域知识库检索文档片段。
- *
- * <p>从原 {@link RagTools} 拆出，仅保留 searchKnowledgeBase 一个工具，
- * 让 LLM 不会在"只有 1 个工具"时出现选择错误。
  */
 @Component
 @Slf4j

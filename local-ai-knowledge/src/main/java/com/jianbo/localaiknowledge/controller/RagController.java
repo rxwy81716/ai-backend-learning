@@ -2,10 +2,13 @@ package com.jianbo.localaiknowledge.controller;
 
 import com.jianbo.localaiknowledge.mapper.ChatConversationMapper;
 import com.jianbo.localaiknowledge.mapper.ChatFeedbackMapper;
+import com.jianbo.localaiknowledge.mapper.DocumentTaskMapper;
 import com.jianbo.localaiknowledge.model.ChatMessage;
 import com.jianbo.localaiknowledge.model.ChatSession;
+import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.model.SystemPrompt;
 import com.jianbo.localaiknowledge.service.ChatHistoryCacheService;
+import com.jianbo.localaiknowledge.service.EsKeywordSearchService;
 import com.jianbo.localaiknowledge.service.agent.MultiAgentOrchestrator;
 import com.jianbo.localaiknowledge.service.SystemPromptService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
@@ -44,6 +47,8 @@ public class RagController {
   private final SystemPromptService promptService;
   private final RedissonClient redissonClient;
   private final ChatFeedbackMapper feedbackMapper;
+  private final DocumentTaskMapper documentTaskMapper;
+  private final EsKeywordSearchService keywordSearchService;
 
   private static final String SESSION_TITLE_KEY = "chat:session:titles";
 
@@ -300,5 +305,86 @@ public class RagController {
     }
     promptService.setDefault(name);
     return Map.of("message", "已设为默认 Prompt", "name", name);
+  }
+
+  // ==================== 知识库导出 ====================
+
+  /** 每个文档最多取的片段数 */
+  private static final int EXPORT_CHUNKS_PER_DOC = 5;
+  /** 最多遍历的文档数 */
+  private static final int EXPORT_MAX_DOCS = 20;
+
+  /**
+   * 导出知识库摘要为 Markdown 格式。
+   *
+   * <p>返回完整的 Markdown 文本，包含所有文档的概览和代表性内容片段。
+   * 前端可将其下载为 .md 文件或直接渲染预览。
+   */
+  @GetMapping(value = "/export/markdown", produces = "text/markdown; charset=UTF-8")
+  public org.springframework.http.ResponseEntity<String> exportMarkdown(
+      @RequestParam(value = "download", defaultValue = "true") boolean download) {
+    String userId = SecurityUtil.getCurrentUserIdStr();
+
+    List<DocumentTask> allDocs = documentTaskMapper.selectAccessibleTasks(userId);
+    List<DocumentTask> doneDocs = allDocs.stream()
+        .filter(d -> d.getStatus() == DocumentTask.TaskStatus.DONE)
+        .limit(EXPORT_MAX_DOCS)
+        .toList();
+
+    String md = renderMarkdown(doneDocs, userId);
+
+    org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+    headers.setContentType(org.springframework.http.MediaType.parseMediaType("text/markdown; charset=UTF-8"));
+    if (download) {
+      // 中文文件名 RFC 5987 编码，避免浏览器乱码
+      String filename = "knowledge_base_" + System.currentTimeMillis() + ".md";
+      headers.add("Content-Disposition",
+          "attachment; filename=\"" + filename + "\"; filename*=UTF-8''" + filename);
+    }
+    return new org.springframework.http.ResponseEntity<>(md, headers, org.springframework.http.HttpStatus.OK);
+  }
+
+  private String renderMarkdown(List<DocumentTask> doneDocs, String userId) {
+    if (doneDocs.isEmpty()) {
+      return "# 知识库摘要\n\n> 知识库中暂无已完成处理的文档。\n";
+    }
+
+    StringBuilder md = new StringBuilder();
+    md.append("# 知识库摘要\n\n");
+    md.append("> 导出时间：").append(java.time.LocalDateTime.now().toString().replace("T", " ")).append("\n");
+    md.append("> 文档总数：").append(doneDocs.size()).append("\n\n");
+    md.append("---\n\n");
+
+    for (int idx = 0; idx < doneDocs.size(); idx++) {
+      DocumentTask doc = doneDocs.get(idx);
+      String fileName = doc.getFileName();
+      String docQuery = stripExtension(fileName);
+
+      md.append("## ").append(idx + 1).append(". ").append(fileName).append("\n\n");
+
+      // 走 BM25 而非 Hybrid：避免 20×embedding(~2.7s) 串行阻塞
+      List<org.springframework.ai.document.Document> chunks =
+          keywordSearchService.searchWithOwnership(docQuery, userId, EXPORT_CHUNKS_PER_DOC);
+
+      if (chunks.isEmpty()) {
+        md.append("> （未检索到内容片段）\n\n");
+      } else {
+        for (int i = 0; i < chunks.size(); i++) {
+          String text = chunks.get(i).getText();
+          md.append("### 片段 ").append(i + 1).append("\n\n");
+          md.append(text).append("\n\n");
+        }
+      }
+      md.append("---\n\n");
+    }
+
+    md.append("\n> 由 AI 知识库系统自动生成\n");
+    return md.toString();
+  }
+
+  private static String stripExtension(String fileName) {
+    if (fileName == null) return "";
+    int dot = fileName.lastIndexOf('.');
+    return dot > 0 ? fileName.substring(0, dot) : fileName;
   }
 }

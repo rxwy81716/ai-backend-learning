@@ -34,7 +34,8 @@ public class IntentRouter {
 
   private static final String ROUTER_PROMPT = """
       你是一个意图分类器。根据用户问题，返回且仅返回下列标签之一，不要解释：
-      - DOCUMENT_OVERVIEW：用户要求总结/概括/整理整个知识库，或询问“有哪些文档”“知识库里有什么”“列出所有文档”等概览性问题
+      - DOCUMENT_OVERVIEW：用户要求总结/概括/整理整个知识库，或询问"有哪些文档""知识库里有什么""列出所有文档"等概览性问题
+      - DOCUMENT_SEARCH：用户要求在文档中搜索/查找/检索某个关键词或短语，如"搜索包含XX的文档""查找提到XX的文档""检索XX关键词"
       - HOT_SEARCH：涉及平台热搜、热榜、排行榜、推荐内容、trending，或提到具体平台（B站/微博/知乎/抖音/小红书/GitHub等）并询问推荐、热门、流行、排行等
       - CHAT：仅限纯闲聊寒暄（你好/再见）、关于助手自身的元问题（你是谁/你能做什么）
       - KNOWLEDGE：具体问题的检索（某个人物/角色/概念/专业知识/技术问题等）。当你不确定时，返回 KNOWLEDGE
@@ -64,6 +65,13 @@ public class IntentRouter {
   private static final Set<String> META_KEYWORDS = Set.of(
       "你是谁", "你是什么", "你能做什么", "有哪些功能", "怎么使用",
       "什么模式", "什么模型", "介绍一下你"
+  );
+
+  /** 文档内搜索关键词：在文档中搜索/查找指定关键词 */
+  private static final Set<String> DOC_SEARCH_KEYWORDS = Set.of(
+      "搜索包含", "查找包含", "检索包含", "搜索含有", "查找含有",
+      "搜索提到", "查找提到", "搜索关键词", "查找关键词",
+      "全文搜索", "全文检索", "搜索文档", "查找文档"
   );
 
   /** 文档概览关键词：总结整个知识库 / 列出所有文档 */
@@ -122,6 +130,13 @@ public class IntentRouter {
       }
     }
 
+    // 文档内搜索关键词（搜索包含XX的文档）
+    for (String kw : DOC_SEARCH_KEYWORDS) {
+      if (lower.contains(kw)) {
+        return AgentType.DOCUMENT_SEARCH;
+      }
+    }
+
     // 文档概览关键词（总结整个知识库）
     for (String kw : OVERVIEW_KEYWORDS) {
       if (lower.contains(kw)) {
@@ -168,6 +183,7 @@ public class IntentRouter {
 
       return switch (tag) {
         case "DOCUMENT_OVERVIEW", "DOCUMENTOVERVIEW" -> AgentType.DOCUMENT_OVERVIEW;
+        case "DOCUMENT_SEARCH", "DOCUMENTSEARCH" -> AgentType.DOCUMENT_SEARCH;
         case "HOT_SEARCH", "HOTSEARCH" -> AgentType.HOT_SEARCH;
         case "CHAT" -> AgentType.CHAT;
         default -> AgentType.KNOWLEDGE;

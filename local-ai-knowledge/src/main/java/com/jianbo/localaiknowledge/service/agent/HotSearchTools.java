@@ -6,12 +6,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
-import org.springframework.stereotype.Component;
 
 /**
  * 热榜 Agent 专用工具：查询各平台实时热搜/热榜数据。
+ *
+ * @deprecated {@link HotSearchAgent} 已改为程序主动调用 {@link HotSearchService}，
+ *             不再通过 LLM tool calling。本类保留供未来可能的 tool calling 场景使用。
  */
-@Component
+@Deprecated(forRemoval = true)
 @Slf4j
 @RequiredArgsConstructor
 public class HotSearchTools {
