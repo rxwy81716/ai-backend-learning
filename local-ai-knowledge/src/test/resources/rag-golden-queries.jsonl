@@ -1,0 +1,5 @@
+{"query":"RAG 是什么","expectedSourceKeywords":["rag","retrieval","检索增强"],"note":"基础概念题"}
+{"query":"hybrid 检索为什么用 RRF 融合","expectedSourceKeywords":["rrf","hybrid","融合"],"note":"算法细节"}
+{"query":"bge-m3 的向量维度是多少","expectedSourceKeywords":["bge-m3","1024","embedding"],"note":"参数题"}
+{"query":"pgvector 用了什么索引类型","expectedSourceKeywords":["hnsw","pgvector","ivfflat"],"note":"实现细节"}
+{"query":"PlannerAgent 如何工作","expectedSourceKeywords":["planner","react","think"],"note":"项目特有概念"}

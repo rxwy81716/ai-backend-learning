@@ -20,7 +20,10 @@ public enum AgentType {
   DOCUMENT_SEARCH("knowledge_base"),
 
   /** 通用对话：无工具，基于 LLM 自身知识直接回答 */
-  CHAT("llm_direct");
+  CHAT("llm_direct"),
+
+  /** ReAct 规划器：Think → Act → Observe 循环，自主拆解多步任务并调用工具 */
+  PLANNER("planner");
 
   /** 与前端 META.source 对齐的标识，保持向后兼容 */
   private final String sourceTag;

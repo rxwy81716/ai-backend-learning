@@ -9,6 +9,7 @@ import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.model.SystemPrompt;
 import com.jianbo.localaiknowledge.service.ChatHistoryCacheService;
 import com.jianbo.localaiknowledge.service.EsKeywordSearchService;
+import com.jianbo.localaiknowledge.service.agent.ChatModelRegistry;
 import com.jianbo.localaiknowledge.service.agent.MultiAgentOrchestrator;
 import com.jianbo.localaiknowledge.service.SystemPromptService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
@@ -49,6 +50,7 @@ public class RagController {
   private final ChatFeedbackMapper feedbackMapper;
   private final DocumentTaskMapper documentTaskMapper;
   private final EsKeywordSearchService keywordSearchService;
+  private final ChatModelRegistry chatModelRegistry;
 
   private static final String SESSION_TITLE_KEY = "chat:session:titles";
 
@@ -76,9 +78,16 @@ public class RagController {
     String promptName = body.get("promptName");
     String chatMode = normalizeChatMode(body.get("chatMode"));
     boolean thinking = parseThinking(body);
+    String model = body.get("model"); // 可选：运行时切换 ChatModel（与 ChatModelRegistry 对齐）
 
     return multiAgentOrchestrator.chatStream(
-        sessionId, question, userId, promptName, chatMode, thinking);
+        sessionId, question, userId, promptName, chatMode, thinking, model);
+  }
+
+  /** 列出注册表中所有可用的 ChatModel key（供前端下拉选择模型） */
+  @GetMapping("/models")
+  public Map<String, Object> listModels() {
+    return Map.of("models", chatModelRegistry.availableKeys());
   }
 
   /** 用户输入最大长度（字符数）：超过即拒绝，避免单次 prompt 撑爆 token / 上下文窗口。 */

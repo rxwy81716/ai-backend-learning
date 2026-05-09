@@ -114,6 +114,28 @@
                   AI 通用知识 · 仅供参考
                 </el-tag>
               </div>
+              <!-- 执行步骤时间线（[STEP] 事件流可视化） -->
+              <div v-if="msg.role === 'assistant' && msg.steps && msg.steps.length" class="steps-section">
+                <div class="steps-header" @click="msg.showSteps = !msg.showSteps">
+                  <el-icon><Promotion /></el-icon>
+                  <span>执行步骤 · {{ msg.steps.length }} 步</span>
+                  <el-icon class="refs-arrow" :class="{ expanded: msg.showSteps }"><ArrowDown /></el-icon>
+                </div>
+                <transition name="refs-fade">
+                  <div v-if="msg.showSteps" class="steps-timeline">
+                    <div v-for="(s, si) in msg.steps" :key="si" class="step-item" :class="'stage-' + s.stage">
+                      <div class="step-dot"></div>
+                      <div class="step-body">
+                        <div class="step-title">
+                          <span class="step-stage">{{ formatStage(s.stage) }}</span>
+                          <span v-if="s.iter" class="step-iter">#{{ s.iter }}</span>
+                        </div>
+                        <div class="step-detail">{{ formatStepDetail(s) }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </transition>
+              </div>
               <!-- 引用来源卡片 -->
               <div v-if="msg.role === 'assistant' && msg.meta?.references?.length" class="references-section">
                 <div class="refs-header" @click="msg.showRefs = !msg.showRefs">
@@ -286,6 +308,29 @@ import { getSessions, getHistory, deleteSession as deleteSessionApi, renameSessi
 import type { Session, ChatMode } from '@/types'
 import { requestStream } from '@/utils/request'
 
+/** 后端 SSE 流中 [STEP]{json}[/STEP] 解析出的执行阶段事件 */
+interface StepEvent {
+  stage: string      // route | rewrite | generate | tool | think | act | observe | done
+  ts?: number
+  iter?: number
+  intent?: string
+  model?: string
+  mode?: string
+  action?: string
+  thought?: string
+  name?: string      // tool name
+  phase?: string     // tool phase: start | end
+  query?: string
+  hits?: number
+  costMs?: number
+  warn?: string
+  changed?: boolean
+  reason?: string
+  searchCalls?: number
+  truncated?: boolean
+  [k: string]: any
+}
+
 interface StreamChatMessage {
   /** 后端 chat_conversation.id；流式生成中尚未持久化的消息无 id */
   id?: number
@@ -301,6 +346,9 @@ interface StreamChatMessage {
   showRefs?: boolean
   /** 用户对该 assistant 消息的本地反馈状态：1=赞 / -1=踩；用于按钮高亮 */
   feedback?: 1 | -1
+  /** 执行步骤时间线（[STEP] 事件流解析结果） */
+  steps?: StepEvent[]
+  showSteps?: boolean
 }
 import {
   Plus,
@@ -482,6 +530,81 @@ const handleSend = async () => {
   await runStream(q)
 }
 
+/**
+ * 从 SSE 文本缓冲区中一次性抽取所有完整的 [STEP]{json}[/STEP] 与 [META]{json}[/META] 块。
+ *
+ * - 跨 chunk 问题：若缓冲区末尾出现 "[STE" / "[META" 等未闭合前缀，会整段保留到 rest 待下次补齐。
+ * - 返回的 text 为去除所有 marker 块后的纯文本，可直接 append 到 fullAnswer。
+ */
+function extractMarkers(buffer: string): { steps: StepEvent[]; meta?: StreamChatMessage['meta']; text: string; rest: string } {
+  const steps: StepEvent[] = []
+  let meta: StreamChatMessage['meta'] | undefined
+  // 匹配任一类型的完整 marker
+  const fullRe = /\[(STEP|META)\]([\s\S]*?)\[\/\1\]/g
+  let out = ''
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = fullRe.exec(buffer)) !== null) {
+    // 先把 marker 前面的纯文本追加到 out
+    out += buffer.slice(lastIndex, m.index)
+    const tag = m[1]
+    const payload = m[2]
+    try {
+      const obj = JSON.parse(payload)
+      if (tag === 'STEP') steps.push(obj as StepEvent)
+      else meta = obj as StreamChatMessage['meta']
+    } catch (e) {
+      console.warn(`解析 ${tag} 失败:`, e, payload)
+    }
+    lastIndex = m.index + m[0].length
+  }
+  // 剩余部分：可能含未闭合的 marker 起始片段，留到下次
+  let rest = buffer.slice(lastIndex)
+  // 找到最后一个可能的 marker 起始 '['，把它之后的内容整段保留（待下次补齐）
+  // 简化：只要 rest 中出现 '[' 就保留其后所有；'[' 之前是纯文本可立即输出
+  const bracketIdx = rest.indexOf('[')
+  if (bracketIdx >= 0) {
+    out += rest.slice(0, bracketIdx)
+    rest = rest.slice(bracketIdx)
+  } else {
+    out += rest
+    rest = ''
+  }
+  return { steps, meta, text: out, rest }
+}
+
+/** stage 中文标签（时间线上显示） */
+function formatStage(stage: string): string {
+  const map: Record<string, string> = {
+    route: '🔀 路由',
+    rewrite: '✏️ 查询改写',
+    generate: '🖊 生成回答',
+    tool: '🔧 工具调用',
+    think: '🤔 思考',
+    act: '⚡ 决策',
+    observe: '👁 观察',
+    done: '✅ 完成'
+  }
+  return map[stage] || stage
+}
+
+/** 把 step 的附加字段拼成一行简洁的人类可读描述 */
+function formatStepDetail(s: StepEvent): string {
+  const parts: string[] = []
+  if (s.intent) parts.push(`intent=${s.intent}`)
+  if (s.model && s.model !== 'default') parts.push(`model=${s.model}`)
+  if (s.name) parts.push(`tool=${s.name}${s.phase ? '/' + s.phase : ''}`)
+  if (s.query) parts.push(`query="${s.query.length > 30 ? s.query.slice(0, 30) + '…' : s.query}"`)
+  if (typeof s.hits === 'number') parts.push(`hits=${s.hits}`)
+  if (typeof s.costMs === 'number') parts.push(`${s.costMs}ms`)
+  if (s.action) parts.push(`action=${s.action}`)
+  if (s.thought) parts.push(s.thought.length > 60 ? s.thought.slice(0, 60) + '…' : s.thought)
+  if (s.warn) parts.push(`⚠ ${s.warn}`)
+  if (s.changed != null) parts.push(`changed=${s.changed}`)
+  if (typeof s.searchCalls === 'number') parts.push(`searchCalls=${s.searchCalls}`)
+  return parts.join(' · ') || '—'
+}
+
 // 真正发起流式请求（用户消息已在 messages 数组末尾或不需要重复入栈，由调用方控制）。
 // 拆出来给 handleSend / handleRegenerate 复用。
 const runStream = async (q: string) => {
@@ -489,6 +612,9 @@ const runStream = async (q: string) => {
   isStreaming.value = true
   let fullAnswer = ''
   let streamMeta: StreamChatMessage['meta'] = undefined
+  // 跨 chunk 缓冲：[STEP]...[/STEP] / [META]...[/META] 可能被 SSE 帧切断
+  let markerBuffer = ''
+  const collectedSteps: StepEvent[] = []
 
   currentStream.value = requestStream(
     '/api/rag/chat/stream',
@@ -499,23 +625,27 @@ const runStream = async (q: string) => {
       thinking: thinkingMode.value
     },
     (text) => {
-      // 解析 [META]...[/META] 元数据（引用来源、回答类型）
-      const metaMatch = text.match(/\[META\](.*?)\[\/META\]/s)
-      if (metaMatch) {
-        try {
-          streamMeta = JSON.parse(metaMatch[1])
-        } catch (e) {
-          console.warn('解析元数据失败:', e)
-        }
-        // 去掉元数据标记，只保留正文
-        text = text.replace(/\[META\].*?\[\/META\]/s, '')
-        if (!text.trim()) return
+      // 1. 合并 SSE 帧到缓冲区，统一做 [STEP]/[META] 抽取
+      markerBuffer += text
+      const extracted = extractMarkers(markerBuffer)
+      markerBuffer = extracted.rest // 剩余可能含未闭合的 [STEP / [META 前缀
+
+      // 2. 处理 STEP 事件：追加到当前 assistant 消息的 steps 数组
+      if (extracted.steps.length) {
+        for (const s of extracted.steps) collectedSteps.push(s)
       }
 
-      fullAnswer += text
-      currentAnswer.value = fullAnswer
-      
-      // 更新或添加AI回复
+      // 3. 处理 META：最后一次覆盖
+      if (extracted.meta) streamMeta = extracted.meta
+
+      // 4. 只有非 marker 的纯文本才进入 fullAnswer
+      const plainText = extracted.text
+      if (plainText) {
+        fullAnswer += plainText
+        currentAnswer.value = fullAnswer
+      }
+
+      // 5. 更新或添加 AI 回复
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg?.role === 'user') {
         messages.value.push({
@@ -523,12 +653,17 @@ const runStream = async (q: string) => {
           content: fullAnswer,
           timestamp: new Date().toISOString(),
           meta: streamMeta,
-          showRefs: false
+          showRefs: false,
+          steps: collectedSteps.length ? [...collectedSteps] : undefined,
+          showSteps: false
         })
       } else {
         lastMsg.content = fullAnswer
         if (streamMeta && !lastMsg.meta) {
           lastMsg.meta = streamMeta
+        }
+        if (collectedSteps.length) {
+          lastMsg.steps = [...collectedSteps]
         }
       }
       scrollToBottom()
@@ -1138,6 +1273,89 @@ onMounted(() => {
 
 .refs-fade-enter-from, .refs-fade-leave-to {
   opacity: 0;
+}
+
+/* ========== 执行步骤时间线（[STEP] 可视化） ========== */
+.steps-section {
+  margin-top: 8px;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.steps-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: #eef5ff;
+  color: #409eff;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 6px;
+  transition: background 0.2s;
+}
+.steps-header:hover {
+  background: #dcecff;
+}
+.steps-timeline {
+  padding: 10px 12px 6px;
+  position: relative;
+}
+.steps-timeline::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  bottom: 14px;
+  width: 2px;
+  background: #e4e7ed;
+}
+.step-item {
+  position: relative;
+  padding-left: 26px;
+  padding-bottom: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #606266;
+}
+.step-item:last-child { padding-bottom: 0; }
+.step-dot {
+  position: absolute;
+  left: 10px;
+  top: 4px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #c0c4cc;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #c0c4cc;
+}
+.stage-route .step-dot    { background: #909399; box-shadow: 0 0 0 1px #909399; }
+.stage-rewrite .step-dot  { background: #e6a23c; box-shadow: 0 0 0 1px #e6a23c; }
+.stage-generate .step-dot { background: #409eff; box-shadow: 0 0 0 1px #409eff; }
+.stage-tool .step-dot     { background: #67c23a; box-shadow: 0 0 0 1px #67c23a; }
+.stage-think .step-dot    { background: #a26af1; box-shadow: 0 0 0 1px #a26af1; }
+.stage-act .step-dot      { background: #409eff; box-shadow: 0 0 0 1px #409eff; }
+.stage-observe .step-dot  { background: #67c23a; box-shadow: 0 0 0 1px #67c23a; }
+.stage-done .step-dot     { background: #67c23a; box-shadow: 0 0 0 1px #67c23a; }
+.step-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-weight: 500;
+  color: #303133;
+}
+.step-iter {
+  font-size: 11px;
+  color: #909399;
+  background: #f4f4f5;
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+.step-detail {
+  color: #606266;
+  word-break: break-all;
+  margin-top: 2px;
 }
 
 .message-time {

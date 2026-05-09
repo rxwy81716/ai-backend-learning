@@ -116,7 +116,7 @@ public class VectorSearchTest {
             System.out.println("ID: " + doc.getId());
             System.out.println("来源: " + doc.getMetadata().get("source"));
             System.out.println("片段: " + doc.getMetadata().get("chunk_index"));
-            System.out.println("内容: " + doc.getContent());
+            System.out.println("内容: " + doc.getText());
         }
     }
 }

@@ -41,13 +41,26 @@ public class KnowledgeTools {
 
     String searchQuery = ctx.getSearchQuery(query);
     String userId = ctx.getUserId();
+    // SSE 执行状态：工具开始调用
+    ctx.emitStep("tool", java.util.Map.of(
+        "name", TOOL_NAME,
+        "phase", "start",
+        "query", searchQuery == null ? "" : searchQuery));
+
     List<Document> docs = hybridSearchService.searchWithOwnership(searchQuery, userId, DEFAULT_KB_TOP_K);
     ctx.addDocs(docs);
 
+    long cost = System.currentTimeMillis() - t0;
     log.info(
         "[KnowledgeAgent Tool] {} | llmQuery={}, searchQuery={}, rewritten={}, userId={}, hit={}, cost={}ms",
-        TOOL_NAME, query, searchQuery, !searchQuery.equals(query), userId, docs.size(),
-        System.currentTimeMillis() - t0);
+        TOOL_NAME, query, searchQuery, !searchQuery.equals(query), userId, docs.size(), cost);
+
+    // SSE 执行状态：工具执行完毕
+    ctx.emitStep("tool", java.util.Map.of(
+        "name", TOOL_NAME,
+        "phase", "end",
+        "hits", docs.size(),
+        "costMs", cost));
 
     if (docs.isEmpty()) {
       return "知识库暂无相关内容。请基于你的通用知识回答用户问题，并在回答末尾明确告知'以下回答基于通用知识，仅供参考'。";

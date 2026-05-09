@@ -1,6 +1,7 @@
 package com.jianbo.localaiknowledge.service;
 
 import com.github.benmanes.caffeine.cache.Cache;
+import com.jianbo.localaiknowledge.utils.SimpleCircuitBreaker;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.document.Document;
@@ -87,6 +88,19 @@ public class HybridSearchService {
   private int rerankCandidates;
 
   /**
+   * Round 4 新增：检索层熔断器。
+   * 连续 5 次失败 → 熔断 30s → 半开探测 → 恢复。失败时返回空列表，不抛异常打断 chat 流。
+   * 通过 {@link com.jianbo.localaiknowledge.config.RagMetrics} 注册 gauge 供 Prometheus 抓取。
+   */
+  private final SimpleCircuitBreaker searchBreaker =
+      new SimpleCircuitBreaker("hybrid-search", 5, 30_000L);
+
+  /** 暴露给 metrics endpoint */
+  public SimpleCircuitBreaker getSearchBreaker() {
+    return searchBreaker;
+  }
+
+  /**
    * 混合检索（带用户归属过滤）
    *
    * <p>查询优先级：ES 向量检索 → PG 向量检索（ES 空结果或失败时降级）
@@ -108,7 +122,11 @@ public class HybridSearchService {
     // 排障关键：未命中时打印 cacheKey，便于对比是 TTL 过期 还是 LLM 改写了 query
     log.debug("Hybrid检索缓存未命中 | key={}", cacheKey);
 
-    List<Document> result = doSearchWithOwnership(query, userId, topK);
+    // Round 4：包一层 SimpleCircuitBreaker。连续失败 5 次 → 熔断 30s → 半开探测 → 恢复。
+    // 熔断时直接返回空列表，由调用方（KnowledgeAgent / PlannerAgent）走"基于通用知识回答"分支兜底。
+    List<Document> result = searchBreaker.callOrFallback(
+        () -> doSearchWithOwnership(query, userId, topK),
+        List::of);
     if (!result.isEmpty()) {
       // 仅缓存非空结果，避免把瞬时空结果（如 ES 抖动）冻结 TTL
       ragSearchCache.put(cacheKey, result);

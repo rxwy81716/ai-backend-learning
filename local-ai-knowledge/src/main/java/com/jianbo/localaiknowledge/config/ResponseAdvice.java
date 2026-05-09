@@ -35,7 +35,8 @@ public class ResponseAdvice implements ResponseBodyAdvice<Object> {
     "/v3/api-docs",
     "/favicon.ico",
     "/stream", // SSE 流式接口
-    "/download" // 文件下载接口
+    "/download", // 文件下载接口
+    "/actuator" // Round 4：Spring Boot Actuator（health/prometheus 等返回 byte[]/Map，不能套 R）
   };
 
   /** 需要忽略统一包装的 Content-Type */

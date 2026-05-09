@@ -51,6 +51,10 @@ spring:
     redis:
       host: localhost
       port: 6379
+      # Redis 服务端开启 requirepass 时必填，否则报 NOAUTH。
+      # 推荐通过环境变量 REDIS_PASSWORD 注入，避免明文入库。
+      password: ${REDIS_PASSWORD:spjiyou}
+      database: 0
   # ==================== 数据库 ====================
   datasource:
     url: jdbc:postgresql://101.132.182.160:5432/ai_knowledge?tcpKeepAlive=true
@@ -118,11 +122,45 @@ app:
       base-url: https://api.siliconflow.cn
       api-key: ${SILICONFLOW_API_KEY:sk-ujhxtozyxlazxylbthdtfcgbqgsezzkjcufglnvzzwwruktv}
       model: BAAI/bge-m3
+  # ==================== 多 ChatModel 注册表 ====================
+  # 运行时根据请求体 body.model 选择模型（与 profile 启动参数独立）。
+  # 前端可调用 GET /api/rag/models 获取可用 key 列表。
+  # provider 的 api-key 留空会被跳过，仅保留能跑通的模型。
+  chat-models:
+    default-key: glm
+    providers:
+      glm:
+        base-url: https://open.bigmodel.cn/api/paas
+        api-key: ${ZHIPU_API_KEY:1a17824aecef4bae8487e3d724173de9.om8jBxc8WbuKdU4V}
+        completions-path: /v4/chat/completions
+        model: glm-4-flash
+        temperature: 0.3
+        max-tokens: 2048
+      deepseek:
+        base-url: https://api.deepseek.com
+        api-key: ${DEEPSEEK_API_KEY:sk-e40f5abad8894678b9f5746fb292adad}
+        model: deepseek-chat
+        temperature: 0.3
+        max-tokens: 2048
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
 #    打印sql
 #    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+# ===== Round 4：Actuator + Prometheus =====
+# 开放 health / info / metrics / prometheus endpoint；prometheus 格式供 Grafana 抓取。
+# 自定义业务指标见 RagMetrics（embed-cache 命中率 / 检索熔断器状态 / chat 错误码 / per-model 耗时）。
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
 logging:
   # 自定义 logback 配置位置（放在 resources/logs/ 下，需显式指定）
   config: classpath:logs/logback-spring.xml

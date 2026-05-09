@@ -155,6 +155,22 @@
             <version>0.12.6</version>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- ===== Round 4 新增：可观测性 ===== -->
+        <!-- Spring Boot Actuator：暴露 /actuator/health /actuator/prometheus 等 endpoint -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- Micrometer Prometheus 注册：把 Counter / Timer / Gauge 暴露成 Prometheus 文本格式 -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-registry-prometheus</artifactId>
+        </dependency>
+        <!-- Round 4 注：Resilience4j 由本项目的轻量 SimpleCircuitBreaker 替代。
+             原因：本机 maven central 被代理 SSL 拦截（cert mismatch），无法拉取
+             io.github.resilience4j:* 工件；inline 实现 ≤80 行，覆盖核心场景
+             （连续失败 → 熔断 → 冷却 → 半开探测）足够。等网络恢复后可平滑切换。 -->
     </dependencies>
     <dependencyManagement>
         <dependencies>

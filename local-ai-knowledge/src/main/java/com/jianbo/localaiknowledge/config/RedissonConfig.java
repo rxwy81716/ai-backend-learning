@@ -17,6 +17,7 @@ public class RedissonConfig {
   @Value("${spring.data.redis.port:6379}")
   private int redisPort;
 
+  /** Redis 密码（默认空）。Redis 服务端开启 requirepass 时必须设置，否则 NOAUTH 报错。 */
   @Value("${spring.data.redis.password:}")
   private String redisPassword;
 

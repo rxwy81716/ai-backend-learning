@@ -1,28 +1,17 @@
 package com.jianbo.localaiknowledge.service.agent;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jianbo.localaiknowledge.model.ChatMessage;
-import com.jianbo.localaiknowledge.model.SystemPrompt;
 import com.jianbo.localaiknowledge.service.ChatHistoryCacheService;
 import com.jianbo.localaiknowledge.service.QueryRewriteService;
-import com.jianbo.localaiknowledge.service.SystemPromptService;
-import com.jianbo.localaiknowledge.utils.ChatContextUtil;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.ResourceAccessException;
 import reactor.core.publisher.Flux;
 import reactor.core.scheduler.Schedulers;
 
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 /**
@@ -46,25 +35,25 @@ import java.util.regex.Pattern;
 public class MultiAgentOrchestrator {
 
   private final ChatHistoryCacheService chatHistoryCache;
-  private final SystemPromptService systemPromptService;
-  private final ChatContextUtil chatContextUtil;
-  private final ObjectMapper objectMapper;
   private final QueryRewriteService queryRewriteService;
   private final IntentRouter intentRouter;
+  private final StreamErrorHandler streamErrorHandler;
+  private final ChatMessageBuilder messageBuilder;
+  private final FollowUpDetector followUpDetector;
+  private final MetaBuilder metaBuilder;
 
   /** Agent 注册表：type → agent 实例 */
   private final Map<AgentType, SpecializedAgent> agentRegistry;
 
-  private static final int MAX_HISTORY_MESSAGES = 20;
   private static final int STREAM_FIRST_BYTE_TIMEOUT_SECONDS = 15;
   private static final int STREAM_IDLE_TIMEOUT_SECONDS = 25;
   private static final String MODE_KNOWLEDGE = "KNOWLEDGE";
   private static final String MODE_LLM = "LLM";
-  private static final String META_KEY_MODE = "chatMode";
   private static final String NO_THINK_PREFIX = "/no_think\n";
 
   // ========== 后处理正则 ==========
   private static final Pattern THINK_BLOCK = Pattern.compile("<think>.*?</think>", Pattern.DOTALL);
+  private static final Pattern STEP_BLOCK = Pattern.compile("\\[STEP].*?\\[/STEP]", Pattern.DOTALL);
   private static final Pattern MULTI_NEWLINE = Pattern.compile("\\n{3,}");
   private static final Pattern META_BLOCK_LINE =
       Pattern.compile("(?m)^\\s*【(?:运行时上下文|执行工具|工具结果|工具调用)】.*$");
@@ -83,35 +72,28 @@ public class MultiAgentOrchestrator {
               + "[。！？\\n]\\s*",
           Pattern.UNICODE_CASE);
 
-  // ========== 追问检测 ==========
+  // 追问检测 / 模式隔离逻辑已下沉到 FollowUpDetector
 
-  /** 追问关键词：序数引用 + 追问动作 */
-  private static final Pattern FOLLOW_UP_PATTERN = Pattern.compile(
-      "第[一二三四五六七八九十\\d]+[个篇份条段章]|"
-          + "刚才|刚刚|前面|上面|之前|上次|上一个|"
-          + "详细说说|展开讲讲|具体说说|再详细|多说点|"
-          + "继续说|接着说|然后呢|还有呢|"
-          + "这个文档|那个文档|这篇|那篇|"
-          + "总结一下|概括一下|归纳一下",
-      Pattern.UNICODE_CASE);
-
-  /** 追问问题最大长度（超过此长度视为独立新问题） */
-  private static final int FOLLOW_UP_MAX_LENGTH = 30;
+  /** Round 4：可选 metrics，启动时用 @Autowired(required=false) 注入，缺失也能跑 */
+  @org.springframework.beans.factory.annotation.Autowired(required = false)
+  private com.jianbo.localaiknowledge.config.RagMetrics ragMetrics;
 
   public MultiAgentOrchestrator(
       ChatHistoryCacheService chatHistoryCache,
-      SystemPromptService systemPromptService,
-      ChatContextUtil chatContextUtil,
-      ObjectMapper objectMapper,
       QueryRewriteService queryRewriteService,
       IntentRouter intentRouter,
+      StreamErrorHandler streamErrorHandler,
+      ChatMessageBuilder messageBuilder,
+      FollowUpDetector followUpDetector,
+      MetaBuilder metaBuilder,
       List<SpecializedAgent> agents) {
     this.chatHistoryCache = chatHistoryCache;
-    this.systemPromptService = systemPromptService;
-    this.chatContextUtil = chatContextUtil;
-    this.objectMapper = objectMapper;
     this.queryRewriteService = queryRewriteService;
     this.intentRouter = intentRouter;
+    this.streamErrorHandler = streamErrorHandler;
+    this.messageBuilder = messageBuilder;
+    this.followUpDetector = followUpDetector;
+    this.metaBuilder = metaBuilder;
 
     // 自动注册所有 SpecializedAgent 实现
     this.agentRegistry = new EnumMap<>(AgentType.class);
@@ -132,6 +114,23 @@ public class MultiAgentOrchestrator {
       String promptName,
       String chatMode,
       boolean thinking) {
+    return chatStream(sessionId, question, userId, promptName, chatMode, thinking, null);
+  }
+
+  /**
+   * 流式问答（带运行时模型选择）。
+   *
+   * @param modelKey 指定 ChatModel key（与 {@link ChatModelRegistry} 对齐；null/blank = 走默认）
+   */
+  public Flux<String> chatStream(
+      String sessionId,
+      String question,
+      String userId,
+      String promptName,
+      String chatMode,
+      boolean thinking,
+      String modelKey) {
+    final long chatStartNanos = System.nanoTime();
     return Flux.defer(
             () -> {
               // 1. 模式判断
@@ -157,7 +156,7 @@ public class MultiAgentOrchestrator {
 
               // 5. 保存用户消息
               if (sessionId != null) {
-                String userMeta = toJson(Map.of(META_KEY_MODE, mode));
+                String userMeta = metaBuilder.toJson(Map.of(FollowUpDetector.META_KEY_MODE, mode));
                 chatHistoryCache.saveMessage(
                     ChatMessage.of(sessionId, "user", question, userMeta, userId));
               }
@@ -165,6 +164,12 @@ public class MultiAgentOrchestrator {
               // 6. 构建工具调用上下文 + Query Rewrite
               StringBuilder fullAnswer = new StringBuilder();
               final RagToolContext ctx = RagToolContext.create(userId);
+              ctx.setModelKey(modelKey);
+              // 6.0 推送路由事件
+              ctx.emitStep("route", Map.of(
+                  "intent", intent.name(),
+                  "mode", mode,
+                  "model", modelKey == null ? "default" : modelKey));
 
               // 6a. 追问检测：注入上文 context
               String followUpContext = null;
@@ -185,6 +190,12 @@ public class MultiAgentOrchestrator {
                   QueryRewriteService.RewriteResult rewriteResult =
                       queryRewriteService.rewriteWithTrace(prevHistory, question);
                   ctx.recordRewrite(rewriteResult);
+                  if (rewriteResult != null && rewriteResult.attempted()) {
+                    ctx.emitStep("rewrite", Map.of(
+                        "changed", rewriteResult.changed(),
+                        "costMs", rewriteResult.costMs(),
+                        "reason", String.valueOf(rewriteResult.reason())));
+                  }
                 }
               }
 
@@ -204,7 +215,11 @@ public class MultiAgentOrchestrator {
               final String[] errorCodeHolder = new String[1];
               final ThinkBlockStripper stripper = new ThinkBlockStripper();
 
-              return agent.execute(request)
+              // Agent token 流 + step 事件流 merge：
+              //  - step 事件带 [STEP]...[/STEP] 标签，前端可单独解析为执行状态 UI
+              //  - step 流在 agent 完成/异常时被 complete，避免挂住 SSE 连接
+              Flux<String> tokenFlux = agent.execute(request)
+                  .doOnSubscribe(s -> ctx.emitStep("generate", Map.of("intent", finalIntent.name())))
                   .timeout(
                       reactor.core.publisher.Mono.delay(
                           Duration.ofSeconds(STREAM_FIRST_BYTE_TIMEOUT_SECONDS)),
@@ -217,6 +232,9 @@ public class MultiAgentOrchestrator {
                   }))
                   .filter(s -> !s.isEmpty())
                   .doOnNext(fullAnswer::append)
+                  .doFinally(sig -> ctx.completeSteps());
+
+              return Flux.merge(ctx.stepsFlux(), tokenFlux)
                   .concatWith(Flux.defer(() -> buildMetaFlux(ctx, finalIntent, forceLlm, errorCodeHolder[0])))
                   .onErrorResume(e -> {
                     boolean firstByteReceived = !fullAnswer.isEmpty();
@@ -226,8 +244,8 @@ public class MultiAgentOrchestrator {
                         sid, finalIntent, code, firstByteReceived, e.toString());
                     String fallback = renderStreamErrorMessage(code, firstByteReceived);
                     fullAnswer.append(fallback);
-                    Map<String, Object> meta = buildMeta(ctx, finalIntent, forceLlm, code);
-                    return Flux.just(fallback, "[META]" + toJson(meta) + "[/META]");
+                    Map<String, Object> meta = metaBuilder.build(ctx, finalIntent, forceLlm, code);
+                    return Flux.just(fallback, "[META]" + metaBuilder.toJson(meta) + "[/META]");
                   })
                   .doOnCancel(() -> log.info("流式被客户端取消 | session={}", sid))
                   .doFinally(sig -> {
@@ -239,15 +257,15 @@ public class MultiAgentOrchestrator {
                       log.info("流式产出为空，跳过持久化 | session={}", sid);
                       return;
                     }
-                    Map<String, Object> metaMap = buildMeta(ctx, finalIntent, forceLlm, errorCodeHolder[0]);
-                    metaMap.put(META_KEY_MODE, finalMode);
+                    Map<String, Object> metaMap = metaBuilder.build(ctx, finalIntent, forceLlm, errorCodeHolder[0]);
+                    metaMap.put(FollowUpDetector.META_KEY_MODE, finalMode);
                     if (cancelled) metaMap.put("cancelled", true);
                     if (cancelled && !content.isEmpty()) {
                       content = content + "\n\n_[已中断]_";
                     }
                     try {
                       chatHistoryCache.saveMessage(
-                          ChatMessage.of(sid, "assistant", content, toJson(metaMap), userId));
+                          ChatMessage.of(sid, "assistant", content, metaBuilder.toJson(metaMap), userId));
                     } catch (Exception persistErr) {
                       log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
                     }
@@ -258,138 +276,49 @@ public class MultiAgentOrchestrator {
                         ctx.isRewriteAttempted(), cancelled, failed);
                   });
             })
-        .subscribeOn(Schedulers.boundedElastic());
+        .subscribeOn(Schedulers.boundedElastic())
+        // Round 4：无论成功/失败/取消都记录 chat 总耗时到 Micrometer Timer
+        .doFinally(sig -> {
+          if (ragMetrics != null) {
+            long costMs = (System.nanoTime() - chatStartNanos) / 1_000_000L;
+            ragMetrics.recordChatDuration(modelKey, costMs);
+          }
+        });
   }
 
   // ========================================================================
   // 内部工具方法
   // ========================================================================
 
+  /** META 流：交给 MetaBuilder 构造 map，再包成 [META]…[/META] */
   private Flux<String> buildMetaFlux(RagToolContext ctx, AgentType intent, boolean forceLlm, String errorCode) {
-    Map<String, Object> meta = buildMeta(ctx, intent, forceLlm, errorCode);
-    return Flux.just("[META]" + toJson(meta) + "[/META]");
+    Map<String, Object> meta = metaBuilder.build(ctx, intent, forceLlm, errorCode);
+    return Flux.just("[META]" + metaBuilder.toJson(meta) + "[/META]");
   }
 
-  private Map<String, Object> buildMeta(RagToolContext ctx, AgentType intent, boolean forceLlm, String errorCode) {
-    Set<String> invoked = new LinkedHashSet<>(ctx.getInvokedTools());
-    List<Document> docs = new ArrayList<>(ctx.getRetrievedDocs());
-
-    // source 标识逻辑：
-    //  - 强制 LLM 模式 / 无工具调用：llm_direct
-    //  - KNOWLEDGE / DOCUMENT_OVERVIEW：需要有 docs 命中才算 knowledge_base，否则 llm_direct
-    //  - 其他 Agent（如 HOT_SEARCH）：只要调用了工具即用 agent sourceTag
-    String source;
-    if (forceLlm || invoked.isEmpty()) {
-      source = "llm_direct";
-    } else if ((intent == AgentType.KNOWLEDGE || intent == AgentType.DOCUMENT_OVERVIEW || intent == AgentType.DOCUMENT_SEARCH) && docs.isEmpty()) {
-      source = "llm_direct";
-    } else {
-      source = intent.sourceTag();
-    }
-
-    Map<String, Object> meta = new LinkedHashMap<>();
-    meta.put("source", source);
-    meta.put("agent", intent.name());
-    meta.put("invokedTools", invoked);
-    meta.put("hitCount", docs.size());
-
-    if (ctx.isRewriteAttempted()) {
-      meta.put("queryRewrite", Map.of(
-          "changed", ctx.isRewriteChanged(),
-          "costMs", ctx.getRewriteCostMs(),
-          "reason", String.valueOf(ctx.getRewriteReason())));
-    }
-    if (!docs.isEmpty()) {
-      meta.put("references", buildReferences(docs));
-    }
-    if ("llm_direct".equals(source) && intent != AgentType.CHAT) {
-      meta.put("disclaimer", "此回答基于 AI 通用知识，未经知识库验证，仅供参考");
-    }
-    if (errorCode != null) {
-      meta.put("error", true);
-      meta.put("errorCode", errorCode);
-    }
-    return meta;
-  }
-
+  /** 兼容旧调用：消息构建委托给 ChatMessageBuilder */
   private List<Message> buildMessages(
       String sysPrompt, String sessionId, String question, String currentMode) {
-    List<Message> messages = new ArrayList<>();
-    messages.add(new SystemMessage(sysPrompt));
-    if (sessionId != null) {
-      List<ChatMessage> history =
-          chatHistoryCache.loadRecentHistory(sessionId, MAX_HISTORY_MESSAGES);
-      for (ChatMessage msg : history) {
-        if (!isSameMode(msg, currentMode)) continue;
-        switch (msg.getRole()) {
-          case "user" -> messages.add(new UserMessage(msg.getContent()));
-          case "assistant" -> messages.add(new AssistantMessage(msg.getContent()));
-        }
-      }
-    }
-    messages.add(new UserMessage(question));
-    chatContextUtil.trimByToken(messages);
-    return messages;
+    return messageBuilder.build(sysPrompt, sessionId, question, currentMode);
   }
 
+  /** 兼容旧调用：system prompt 解析委托给 ChatMessageBuilder */
   private String resolveAgentSystemPrompt(String promptName, SpecializedAgent agent) {
-    SystemPrompt prompt = null;
-    if (promptName != null && !promptName.isBlank()) {
-      prompt = systemPromptService.getByName(promptName);
-    }
-    if (prompt == null) {
-      try {
-        prompt = systemPromptService.getDefault();
-      } catch (Exception e) {
-        log.debug("加载默认 SystemPrompt 失败，使用 Agent 内置提示: {}", e.getMessage());
-      }
-    }
-    if (prompt == null || prompt.getContent() == null || prompt.getContent().isBlank()) {
-      return agent.systemPrompt();
-    }
-    String userPart = prompt.getContent().replace("{context}", "").trim();
-    return agent.systemPrompt() + "\n\n附加风格指令：\n" + userPart;
+    return messageBuilder.resolveAgentSystemPrompt(promptName, agent);
   }
 
   private static String normalizeMode(String chatMode) {
     return MODE_LLM.equalsIgnoreCase(chatMode) ? MODE_LLM : MODE_KNOWLEDGE;
   }
 
-  /** 判断是否为追问：短问题 + 包含序数引用或追问动作词 */
+  /** 兼容旧调用：追问检测委托给 FollowUpDetector */
   private boolean isFollowUp(String question) {
-    if (question == null || question.isBlank()) return false;
-    if (question.length() > FOLLOW_UP_MAX_LENGTH) return false;
-    return FOLLOW_UP_PATTERN.matcher(question).find();
+    return followUpDetector.isFollowUp(question);
   }
 
-  /** 加载最近一条 assistant 消息内容，用于追问上下文注入 */
+  /** 兼容旧调用：上文加载委托给 FollowUpDetector */
   private String loadLastAssistantContent(String sessionId, String mode) {
-    List<ChatMessage> history = chatHistoryCache.loadRecentHistory(sessionId, 5);
-    for (int i = history.size() - 1; i >= 0; i--) {
-      ChatMessage msg = history.get(i);
-      if ("assistant".equals(msg.getRole()) && isSameMode(msg, mode)) {
-        String content = msg.getContent();
-        if (content != null && !content.isBlank()) {
-          // 截取前 2000 字符，避免撑爆上下文
-          return content.length() > 2000 ? content.substring(0, 2000) : content;
-        }
-      }
-    }
-    return null;
-  }
-
-  private boolean isSameMode(ChatMessage msg, String currentMode) {
-    String stored = MODE_KNOWLEDGE;
-    String meta = msg.getMetadata();
-    if (meta != null && !meta.isBlank()) {
-      try {
-        Map<?, ?> map = objectMapper.readValue(meta, Map.class);
-        Object v = map.get(META_KEY_MODE);
-        if (v != null) stored = v.toString();
-      } catch (Exception ignore) {
-      }
-    }
-    return currentMode.equalsIgnoreCase(stored);
+    return followUpDetector.loadLastAssistantContent(sessionId, mode);
   }
 
   // ========== 后处理 ==========
@@ -397,6 +326,7 @@ public class MultiAgentOrchestrator {
   private static String cleanAnswer(String raw) {
     if (raw == null || raw.isEmpty()) return "";
     String s = THINK_BLOCK.matcher(raw).replaceAll("");
+    s = STEP_BLOCK.matcher(s).replaceAll("");
     s = META_BLOCK_LINE.matcher(s).replaceAll("");
     s = INLINE_SOURCE_TAG.matcher(s).replaceAll("");
     s = REFERENCE_FOOTER.matcher(s).replaceAll("");
@@ -489,85 +419,15 @@ public class MultiAgentOrchestrator {
     }
   }
 
-  // ========== 错误处理 ==========
+  // ========== 错误处理（逻辑已下沉到 StreamErrorHandler；此处仅保留瘦代理方法以减小 diff） ==========
 
-  private static String classifyStreamError(Throwable e, boolean firstByteReceived) {
-    if (e instanceof TimeoutException) {
-      return firstByteReceived ? "timeout_idle" : "timeout_first_byte";
-    }
-    if (e instanceof HttpClientErrorException ce) {
-      int code = ce.getStatusCode().value();
-      if (code == 429) return "rate_limit";
-      if (code == 401 || code == 403) return "auth";
-      String body = ce.getResponseBodyAsString().toLowerCase();
-      if (body.contains("content_filter") || body.contains("safety") || body.contains("moderation")) {
-        return "content_policy";
-      }
-      return "client_error";
-    }
-    if (e instanceof HttpServerErrorException) return "server_error";
-    if (e instanceof ResourceAccessException || e instanceof java.io.IOException) return "network";
-    return "unknown";
+  private String classifyStreamError(Throwable e, boolean firstByteReceived) {
+    return streamErrorHandler.classify(e, firstByteReceived);
   }
 
-  private static String renderStreamErrorMessage(String code, boolean firstByteReceived) {
-    return switch (code) {
-      case "timeout_first_byte" ->
-          "抱歉，AI 服务响应超时（首字节 " + STREAM_FIRST_BYTE_TIMEOUT_SECONDS + "s 未到），请稍后重试。";
-      case "timeout_idle" ->
-          "\n\n_[流式中断：连续 " + STREAM_IDLE_TIMEOUT_SECONDS + "s 未收到新内容]_";
-      case "rate_limit" -> "请求过于频繁，请稍后再试。";
-      case "auth" -> "AI 服务认证失败，请联系管理员检查 API Key 配置。";
-      case "content_policy" -> "抱歉，您的问题或上下文触发了内容安全策略，无法回答。";
-      case "client_error" -> "抱歉，请求被服务端拒绝（参数或配额问题），请稍后重试。";
-      case "server_error", "network", "unknown" ->
-          firstByteReceived
-              ? "\n\n_[AI 服务连接异常，回答已中断]_"
-              : "抱歉，AI 服务暂时不可用，请稍后重试。";
-      default -> "抱歉，AI 服务暂时不可用，请稍后重试。";
-    };
+  private String renderStreamErrorMessage(String code, boolean firstByteReceived) {
+    return streamErrorHandler.render(code, firstByteReceived);
   }
 
-  // ========== 引用构建 ==========
-
-  private static final int REFERENCE_CONTENT_MAX = 200;
-
-  private List<Map<String, Object>> buildReferences(List<Document> docs) {
-    LinkedHashMap<String, Map<String, Object>> bySource = new LinkedHashMap<>();
-    for (Document doc : docs) {
-      Map<String, Object> meta = doc.getMetadata();
-      Object src = meta.getOrDefault("source", "未知");
-      String name = String.valueOf(src);
-      int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-      if (slash >= 0 && slash < name.length() - 1) name = name.substring(slash + 1);
-      if (bySource.containsKey(name)) continue;
-
-      String content = truncate(doc.getText(), REFERENCE_CONTENT_MAX);
-      Object score = meta.get("hybrid_score");
-      if (score == null) score = meta.get("_score");
-      if (score == null) score = meta.get("distance");
-
-      Map<String, Object> ref = new LinkedHashMap<>();
-      ref.put("source", name);
-      ref.put("content", content);
-      if (score != null) ref.put("score", score);
-      bySource.put(name, ref);
-    }
-    return new ArrayList<>(bySource.values());
-  }
-
-  private static String truncate(String s, int max) {
-    if (s == null) return "";
-    String t = s.replaceAll("\\s+", " ").trim();
-    if (t.length() <= max) return t;
-    return t.substring(0, max) + "…";
-  }
-
-  private String toJson(Object obj) {
-    try {
-      return objectMapper.writeValueAsString(obj);
-    } catch (Exception e) {
-      return "{}";
-    }
-  }
+  // 引用构建 / JSON 序列化已下沉到 MetaBuilder
 }

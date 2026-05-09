@@ -74,6 +74,12 @@ public class IntentRouter {
       "全文搜索", "全文检索", "搜索文档", "查找文档"
   );
 
+  /** 规划类关键词：多步任务 / 显式要求自主规划（触发 ReAct PlannerAgent） */
+  private static final Set<String> PLAN_KEYWORDS = Set.of(
+      "规划一下", "帮我规划", "请规划", "多步", "step by step", "拆解一下",
+      "一步步", "分步", "逐步分析", "先查再答", "先检索"
+  );
+
   /** 文档概览关键词：总结整个知识库 / 列出所有文档 */
   private static final Set<String> OVERVIEW_KEYWORDS = Set.of(
       "总结知识库", "总结一下知识库", "知识库核心内容", "知识库里有什么",
@@ -127,6 +133,13 @@ public class IntentRouter {
       boolean hasRecommend = RECOMMEND_KEYWORDS.stream().anyMatch(lower::contains);
       if (hasRecommend) {
         return AgentType.HOT_SEARCH;
+      }
+    }
+
+    // 规划类关键词（显式要求多步 ReAct 流程）
+    for (String kw : PLAN_KEYWORDS) {
+      if (lower.contains(kw)) {
+        return AgentType.PLANNER;
       }
     }
 

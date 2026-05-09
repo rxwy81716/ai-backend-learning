@@ -34,11 +34,20 @@ public class EmbeddingModelConfig {
   @Value("${app.embedding.siliconflow.base-url:https://api.siliconflow.cn}")
   private String baseUrl;
 
-  @Value("${app.embedding.siliconflow.api-key:${SILICONFLOW_API_KEY:}}")
+  @Value("${app.embedding.siliconflow.api-key:}")
   private String apiKey;
 
   @Value("${app.embedding.siliconflow.model:BAAI/bge-m3}")
   private String model;
+
+  @Value("${app.embedding.cache.enabled:true}")
+  private boolean cacheEnabled;
+
+  @Value("${app.embedding.cache.max-size:2000}")
+  private int cacheMaxSize;
+
+  @Value("${app.embedding.cache.ttl-minutes:10}")
+  private long cacheTtlMinutes;
 
   @Bean
   @Primary
@@ -59,9 +68,16 @@ public class EmbeddingModelConfig {
             .restClientBuilder(restClientBuilder)
             .build();
 
-    return new OpenAiEmbeddingModel(
-        openAiApi,
-        MetadataMode.EMBED,
-        OpenAiEmbeddingOptions.builder().model(model).build());
+    EmbeddingModel raw =
+        new OpenAiEmbeddingModel(
+            openAiApi,
+            MetadataMode.EMBED,
+            OpenAiEmbeddingOptions.builder().model(model).build());
+
+    if (!cacheEnabled) {
+      log.info("⚠ EmbeddingModel 缓存已禁用（app.embedding.cache.enabled=false）");
+      return raw;
+    }
+    return new CachedEmbeddingModel(raw, cacheMaxSize, cacheTtlMinutes);
   }
 }
