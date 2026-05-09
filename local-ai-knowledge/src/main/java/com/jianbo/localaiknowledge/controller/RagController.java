@@ -1,6 +1,7 @@
 package com.jianbo.localaiknowledge.controller;
 
-import com.jianbo.localaiknowledge.mapper.ChatConversationMapper;
+import com.jianbo.localaiknowledge.config.ForbiddenException;
+import com.jianbo.localaiknowledge.config.UnauthorizedException;
 import com.jianbo.localaiknowledge.mapper.ChatFeedbackMapper;
 import com.jianbo.localaiknowledge.mapper.DocumentTaskMapper;
 import com.jianbo.localaiknowledge.model.ChatMessage;
@@ -43,7 +44,6 @@ import java.util.UUID;
 public class RagController {
 
   private final MultiAgentOrchestrator multiAgentOrchestrator;
-  private final ChatConversationMapper conversationMapper;
   private final ChatHistoryCacheService chatHistoryCache;
   private final SystemPromptService promptService;
   private final RedissonClient redissonClient;
@@ -144,7 +144,7 @@ public class RagController {
     if (userId == null) {
       return List.of();
     }
-    List<ChatSession> list = conversationMapper.selectSessionListByUserId(userId);
+    List<ChatSession> list = chatHistoryCache.listSessionsByUserId(userId);
     if (list.isEmpty()) return list;
 
     // 一次 HMGET 拉所有自定义标题，避免 N 次 Redis round trip
@@ -198,7 +198,7 @@ public class RagController {
   @GetMapping("/history/{sessionId}")
   public List<ChatMessage> history(@PathVariable String sessionId) {
     requireSessionOwnership(sessionId);
-    return conversationMapper.selectBySession(sessionId);
+    return chatHistoryCache.listBySession(sessionId);
   }
 
   /** 删除会话（鉴权：仅会话归属者可删除） */
@@ -210,16 +210,20 @@ public class RagController {
   }
 
   /**
-   * 校验当前登录用户是否拥有指定会话；不通过则抛 {@link SecurityException}（由
-   * {@link com.jianbo.localaiknowledge.config.GlobalExceptionHandler} 兜底返回 403）。
+   * 校验当前登录用户是否拥有指定会话。
+   *
+   * <ul>
+   *   <li>未登录 → {@link UnauthorizedException}（HTTP 401）
+   *   <li>会话不属于当前用户 → {@link ForbiddenException}（HTTP 403）
+   * </ul>
    */
   private void requireSessionOwnership(String sessionId) {
     String userId = SecurityUtil.getCurrentUserIdStr();
     if (userId == null) {
-      throw new SecurityException("未登录");
+      throw new UnauthorizedException("未登录");
     }
-    if (!conversationMapper.existsBySessionAndUserId(sessionId, userId)) {
-      throw new SecurityException("无权访问该会话");
+    if (!chatHistoryCache.isSessionOwnedBy(sessionId, userId)) {
+      throw new ForbiddenException("无权访问该会话");
     }
   }
 
@@ -228,15 +232,15 @@ public class RagController {
    */
   private void assertSessionOwnedByCurrentUser(String sessionId, String userId) {
     if (userId == null) {
-      throw new SecurityException("未登录");
+      throw new UnauthorizedException("未登录");
     }
-    String owner = conversationMapper.selectOwnerOfSession(sessionId);
+    String owner = chatHistoryCache.findSessionOwner(sessionId);
     if (owner == null) {
       // 新会话：DB 中尚无任何消息，放行（首次发消息会写入并绑定 userId）
       return;
     }
     if (!owner.equals(userId)) {
-      throw new SecurityException("无权访问该会话");
+      throw new ForbiddenException("无权访问该会话");
     }
   }
 
@@ -252,7 +256,7 @@ public class RagController {
   public Map<String, Object> feedback(@RequestBody Map<String, Object> body) {
     String userId = SecurityUtil.getCurrentUserIdStr();
     if (userId == null) {
-      throw new SecurityException("未登录");
+      throw new UnauthorizedException("未登录");
     }
     Object midObj = body.get("messageId");
     Object ratingObj = body.get("rating");

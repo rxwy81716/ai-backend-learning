@@ -7,7 +7,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -17,6 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -42,7 +44,8 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class RateLimitFilter extends OncePerRequestFilter {
 
-  private final RedisTemplate<String, Object> redisTemplate;
+  /** 使用 StringRedisTemplate：键/值/ARGV 都是 StringRedisSerializer，Lua 脚本 ARGV[1] 拿到的就是纯数字字符串， PEXPIRE 可直接 tonumber。 */
+  private final StringRedisTemplate redisTemplate;
 
   private static final String KEY_PREFIX = "rate:anon:";
   private static final String KEY_USER_QPS = "rate:chat:user:qps:";
@@ -53,6 +56,24 @@ public class RateLimitFilter extends OncePerRequestFilter {
   private static final String[] CHAT_PATHS = {"/api/rag/chat", "/api/rag/chat/stream"};
 
   private static final DateTimeFormatter DAY_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
+
+  /**
+   * 原子 INCR + PEXPIRE Lua 脚本。
+   *
+   * <p>修复原先"INCR 后判 count==1 再 EXPIRE"的竞态：若 INCR 后进程挂掉 / 网络抖动，
+   * key 会永不过期。脚本里 INCR + PEXPIRE 在 Redis 单线程上一气执行，要么都生效要么都不生效。
+   *
+   * <p>采用“仅首次设 TTL”（count == 1 才 PEXPIRE），保证固定窗口语义不被后续请求拉长。
+   *
+   * <p>返回值：当前计数。调用方自行与 max 比较。
+   */
+  private static final String INCR_PEXPIRE_LUA =
+      "local v = redis.call('INCR', KEYS[1]) "
+          + "if v == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end "
+          + "return v";
+
+  private static final DefaultRedisScript<Long> INCR_PEXPIRE_SCRIPT =
+      new DefaultRedisScript<>(INCR_PEXPIRE_LUA, Long.class);
 
   @Value("${app.rate-limit.anonymous-max:20}")
   private int anonymousMax;
@@ -97,15 +118,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
       return;
     }
 
-    // 匿名用户：按 IP 限流
+    // 匿名用户：按 IP 限流（原子 INCR + PEXPIRE）
     String ip = getClientIp(request);
     String key = KEY_PREFIX + ip;
-
-    Long count = redisTemplate.opsForValue().increment(key);
-    if (count != null && count == 1) {
-      // 首次访问，设置过期时间
-      redisTemplate.expire(key, windowMinutes, TimeUnit.MINUTES);
-    }
+    long windowMs = TimeUnit.MINUTES.toMillis(windowMinutes);
+    Long count = redisTemplate.execute(
+        INCR_PEXPIRE_SCRIPT, Collections.singletonList(key), String.valueOf(windowMs));
 
     if (count != null && count > anonymousMax) {
       log.warn("匿名限流触发 | ip={}, count={}, limit={}", ip, count, anonymousMax);
@@ -185,13 +203,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
   }
 
   /**
-   * INCR 一个 key，若是新建则附加 TTL；返回 true 表示当前计数 &gt; max（已超限）。 TTL 仅在 count==1 时设置，避免每次都 EXPIRE 拉长窗口。
+   * 原子 INCR + PEXPIRE（仅首次设 TTL），返回 true 表示当前计数 &gt; max。
+   *
+   * <p>走 Lua 脚本保证原子性：避免"INCR 后进程挂掉导致 key 永不过期"的竞态。
    */
   private boolean incrAndExceeds(String key, long ttl, TimeUnit unit, long max) {
-    Long count = redisTemplate.opsForValue().increment(key);
-    if (count != null && count == 1) {
-      redisTemplate.expire(key, ttl, unit);
-    }
+    long ttlMs = unit.toMillis(ttl);
+    Long count = redisTemplate.execute(
+        INCR_PEXPIRE_SCRIPT, Collections.singletonList(key), String.valueOf(ttlMs));
     return count != null && count > max;
   }
 

@@ -65,7 +65,7 @@ public class KnowledgeTools {
     if (docs.isEmpty()) {
       return "知识库暂无相关内容。请基于你的通用知识回答用户问题，并在回答末尾明确告知'以下回答基于通用知识，仅供参考'。";
     }
-    return formatDocs(docs);
+    return com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(docs);
   }
 
   private RagToolContext resolveCtx(ToolContext toolCtx) {
@@ -75,16 +75,5 @@ public class KnowledgeTools {
     }
     log.warn("ToolContext 未携带 {}，工具调用将无法回传元数据", CTX_KEY);
     return RagToolContext.create(null);
-  }
-
-  private String formatDocs(List<Document> docs) {
-    StringBuilder sb = new StringBuilder();
-    for (int i = 0; i < docs.size(); i++) {
-      Document doc = docs.get(i);
-      String src = String.valueOf(doc.getMetadata().getOrDefault("source", "未知"));
-      sb.append("【").append(i + 1).append("】[来源: ").append(src).append("]\n")
-          .append(doc.getText()).append("\n\n");
-    }
-    return sb.toString();
   }
 }

@@ -11,7 +11,6 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.stream.Collectors;
 
@@ -57,17 +56,28 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.FORBIDDEN).body(R.forbidden("权限不足"));
   }
 
+  /** 业务层未认证（HTTP 401）。 */
+  @ExceptionHandler(UnauthorizedException.class)
+  public ResponseEntity<R<?>> handleUnauthorized(UnauthorizedException e) {
+    log.warn("未认证拦截: {}", e.getMessage());
+    return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(R.unauthorized(e.getMessage()));
+  }
+
+  /** 业务层越权（HTTP 403）。 */
+  @ExceptionHandler(ForbiddenException.class)
+  public ResponseEntity<R<?>> handleForbidden(ForbiddenException e) {
+    log.warn("越权拦截: {}", e.getMessage());
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(R.forbidden(e.getMessage()));
+  }
+
   /**
-   * 业务层抛出的越权异常（如访问他人会话）；消息为"未登录"时按 401 处理，其余按 403。
+   * SecurityException 兜底：JDK / 第三方代码意外抛出时按 403 处理；项目自身业务请改抛
+   * {@link UnauthorizedException} / {@link ForbiddenException}。
    */
   @ExceptionHandler(SecurityException.class)
   public ResponseEntity<R<?>> handleSecurity(SecurityException e) {
-    log.warn("越权/未认证拦截: {}", e.getMessage());
-    String msg = e.getMessage();
-    if (msg != null && msg.contains("未登录")) {
-      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(R.unauthorized(msg));
-    }
-    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(R.forbidden(msg));
+    log.warn("SecurityException 兜底拦截 (建议改抛 Unauthorized/Forbidden): {}", e.getMessage());
+    return ResponseEntity.status(HttpStatus.FORBIDDEN).body(R.forbidden(e.getMessage()));
   }
 
   /** 非法参数 */

@@ -2,6 +2,7 @@ package com.jianbo.localaiknowledge.service;
 
 import com.jianbo.localaiknowledge.mapper.ChatConversationMapper;
 import com.jianbo.localaiknowledge.model.ChatMessage;
+import com.jianbo.localaiknowledge.model.ChatSession;
 import com.jianbo.localaiknowledge.utils.RedisUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -117,5 +118,27 @@ public class ChatHistoryCacheService {
   /** 清除某会话的 Redis 缓存（DB 不动） 用于缓存不一致时手动修复 */
   public void evictCache(String sessionId) {
     redisTemplate.delete(KEY_PREFIX + sessionId);
+  }
+
+  // ==================== 查询委托（替代 Controller 直连 Mapper） ====================
+
+  /** 列出某用户名下所有会话（含首条问题、创建时间），按时间倒序。 */
+  public List<ChatSession> listSessionsByUserId(String userId) {
+    return conversationMapper.selectSessionListByUserId(userId);
+  }
+
+  /** 列出指定会话的全部消息（按时间正序）。调用方需自行做归属鉴权。 */
+  public List<ChatMessage> listBySession(String sessionId) {
+    return conversationMapper.selectBySession(sessionId);
+  }
+
+  /** 校验 sessionId 是否属于指定 userId（用于鉴权）。 */
+  public boolean isSessionOwnedBy(String sessionId, String userId) {
+    return conversationMapper.existsBySessionAndUserId(sessionId, userId);
+  }
+
+  /** 查询 sessionId 当前归属的 userId；新会话返回 null（首次发消息会写入并绑定）。 */
+  public String findSessionOwner(String sessionId) {
+    return conversationMapper.selectOwnerOfSession(sessionId);
   }
 }

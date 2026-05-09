@@ -1,5 +1,6 @@
 package com.jianbo.localaiknowledge.service.agent;
 
+import com.github.benmanes.caffeine.cache.Cache;
 import com.jianbo.localaiknowledge.mapper.DocumentTaskMapper;
 import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.service.HybridSearchService;
@@ -14,7 +15,6 @@ import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 文档概览 Agent：遍历用户所有文档，每个文档取样片段，综合总结。
@@ -30,18 +30,13 @@ public class DocumentOverviewAgent implements SpecializedAgent {
   private final ChatClient chatClient;
   private final DocumentTaskMapper documentTaskMapper;
   private final HybridSearchService hybridSearchService;
+  /** 概览缓存（CacheConfig#docOverviewCache 提供，TTL 60s）。 */
+  private final Cache<String, String> docOverviewCache;
 
   /** 每个文档最多取的片段数 */
   private static final int CHUNKS_PER_DOC = 3;
   /** 最多遍历的文档数（防止文档过多撑爆 token） */
   private static final int MAX_DOCS = 10;
-  /** 概览缓存 TTL（毫秒） */
-  private static final long CACHE_TTL_MS = 60_000;
-
-  /** 概览缓存：userId → (timestamp, overviewText) */
-  private final ConcurrentHashMap<String, CacheEntry> overviewCache = new ConcurrentHashMap<>();
-
-  private record CacheEntry(long timestamp, String overviewText) {}
 
   private static final String SYSTEM_PROMPT = """
       你是一个文档知识管理助手。系统已为你提供了用户知识库中所有文档的代表性内容片段。
@@ -79,14 +74,14 @@ public class DocumentOverviewAgent implements SpecializedAgent {
     String userId = ctx.getUserId();
     String cacheKey = userId != null ? userId : "_anon_";
 
-    // 0. 检查缓存
-    CacheEntry cached = overviewCache.get(cacheKey);
-    if (cached != null && System.currentTimeMillis() - cached.timestamp < CACHE_TTL_MS) {
+    // 0. 检查缓存（Caffeine 自带 TTL）
+    String cached = docOverviewCache.getIfPresent(cacheKey);
+    if (cached != null) {
       log.info("[DocumentOverviewAgent] 缓存命中 | userId={}", userId);
       ctx.recordInvocation("documentOverview");
       List<Message> messages = new ArrayList<>(request.messages());
       messages.add(messages.size() - 1,
-          new SystemMessage("【知识库概览（缓存）】\n" + cached.overviewText + "\n请基于以上内容回答用户问题。"));
+          new SystemMessage("【知识库概览（缓存）】\n" + cached + "\n请基于以上内容回答用户问题。"));
       return chatClient.prompt().messages(messages).stream().content();
     }
 
@@ -135,7 +130,7 @@ public class DocumentOverviewAgent implements SpecializedAgent {
         doneDocs.size(), ctx.getRetrievedDocs().size());
 
     // 写入缓存
-    overviewCache.put(cacheKey, new CacheEntry(System.currentTimeMillis(), kbContext.toString()));
+    docOverviewCache.put(cacheKey, kbContext.toString());
 
     // 3. 注入上下文
     List<Message> augmentedMessages = new ArrayList<>(request.messages());

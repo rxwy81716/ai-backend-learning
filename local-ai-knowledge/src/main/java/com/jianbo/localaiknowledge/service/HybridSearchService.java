@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -56,6 +57,9 @@ public class HybridSearchService {
   /** PG VectorStore（Spring AI 自动配置 bean 名 "vectorStore"，必须用 @Qualifier 区分 ES @Primary bean） */
   @Qualifier("vectorStore")
   private final VectorStore pgVectorStore;
+
+  /** 混合检索专用线程池（避开 commonPool）。 */
+  private final ExecutorService ragSearchExecutor;
 
   /**
    * RAG 检索结果缓存（CacheConfig#ragSearchCache 提供，TTL 10min）。
@@ -162,7 +166,7 @@ public class HybridSearchService {
 
     long t0 = System.currentTimeMillis();
 
-    // 并发跑两路召回
+    // 并发跑两路召回（走专用线程池，防止阻塞 IO 占满 ForkJoinPool.commonPool）
     CompletableFuture<List<Document>> vectorFuture =
         CompletableFuture.supplyAsync(
             () -> {
@@ -173,7 +177,8 @@ public class HybridSearchService {
                 log.warn("ES 向量检索失败，降级 | err={}", e.getMessage());
                 return List.<Document>of();
               }
-            });
+            },
+            ragSearchExecutor);
 
     CompletableFuture<List<Document>> keywordFuture =
         CompletableFuture.supplyAsync(
@@ -184,7 +189,8 @@ public class HybridSearchService {
                 log.warn("BM25 检索失败，降级 | err={}", e.getMessage());
                 return List.<Document>of();
               }
-            });
+            },
+            ragSearchExecutor);
 
     List<Document> vectorHits;
     List<Document> keywordHits;

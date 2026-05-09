@@ -107,16 +107,6 @@ public class MultiAgentOrchestrator {
   // 流式问答（前端唯一入口）
   // ========================================================================
 
-  public Flux<String> chatStream(
-      String sessionId,
-      String question,
-      String userId,
-      String promptName,
-      String chatMode,
-      boolean thinking) {
-    return chatStream(sessionId, question, userId, promptName, chatMode, thinking, null);
-  }
-
   /**
    * 流式问答（带运行时模型选择）。
    *
@@ -148,11 +138,11 @@ public class MultiAgentOrchestrator {
               // 3. 构建 system prompt
               String basePrompt = forceLlm
                   ? agent.systemPrompt()
-                  : resolveAgentSystemPrompt(promptName, agent);
+                  : messageBuilder.resolveAgentSystemPrompt(promptName, agent);
               String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
 
               // 4. 构建消息列表
-              List<Message> messages = buildMessages(sysPrompt, sessionId, question, mode);
+              List<Message> messages = messageBuilder.build(sysPrompt, sessionId, question, mode);
 
               // 5. 保存用户消息
               if (sessionId != null) {
@@ -173,8 +163,8 @@ public class MultiAgentOrchestrator {
 
               // 6a. 追问检测：注入上文 context
               String followUpContext = null;
-              if (sessionId != null && isFollowUp(question)) {
-                followUpContext = loadLastAssistantContent(sessionId, mode);
+              if (sessionId != null && followUpDetector.isFollowUp(question)) {
+                followUpContext = followUpDetector.loadLastAssistantContent(sessionId, mode);
                 if (followUpContext != null) {
                   log.info("[追问检测] 检测到追问，注入上文 {} 字符 | session={}, question={}",
                       followUpContext.length(), sessionId, question);
@@ -238,11 +228,11 @@ public class MultiAgentOrchestrator {
                   .concatWith(Flux.defer(() -> buildMetaFlux(ctx, finalIntent, forceLlm, errorCodeHolder[0])))
                   .onErrorResume(e -> {
                     boolean firstByteReceived = !fullAnswer.isEmpty();
-                    String code = classifyStreamError(e, firstByteReceived);
+                    String code = streamErrorHandler.classify(e, firstByteReceived);
                     errorCodeHolder[0] = code;
                     log.error("Agent 流式异常 | session={}, agent={}, code={}, firstByte={}, err={}",
                         sid, finalIntent, code, firstByteReceived, e.toString());
-                    String fallback = renderStreamErrorMessage(code, firstByteReceived);
+                    String fallback = streamErrorHandler.render(code, firstByteReceived);
                     fullAnswer.append(fallback);
                     Map<String, Object> meta = metaBuilder.build(ctx, finalIntent, forceLlm, code);
                     return Flux.just(fallback, "[META]" + metaBuilder.toJson(meta) + "[/META]");
@@ -296,34 +286,14 @@ public class MultiAgentOrchestrator {
     return Flux.just("[META]" + metaBuilder.toJson(meta) + "[/META]");
   }
 
-  /** 兼容旧调用：消息构建委托给 ChatMessageBuilder */
-  private List<Message> buildMessages(
-      String sysPrompt, String sessionId, String question, String currentMode) {
-    return messageBuilder.build(sysPrompt, sessionId, question, currentMode);
-  }
-
-  /** 兼容旧调用：system prompt 解析委托给 ChatMessageBuilder */
-  private String resolveAgentSystemPrompt(String promptName, SpecializedAgent agent) {
-    return messageBuilder.resolveAgentSystemPrompt(promptName, agent);
-  }
-
   private static String normalizeMode(String chatMode) {
     return MODE_LLM.equalsIgnoreCase(chatMode) ? MODE_LLM : MODE_KNOWLEDGE;
   }
 
-  /** 兼容旧调用：追问检测委托给 FollowUpDetector */
-  private boolean isFollowUp(String question) {
-    return followUpDetector.isFollowUp(question);
-  }
-
-  /** 兼容旧调用：上文加载委托给 FollowUpDetector */
-  private String loadLastAssistantContent(String sessionId, String mode) {
-    return followUpDetector.loadLastAssistantContent(sessionId, mode);
-  }
-
   // ========== 后处理 ==========
 
-  private static String cleanAnswer(String raw) {
+  /** package-private 暴露给 {@code MultiAgentOrchestratorCleanAnswerTest} 单测覆盖回归。 */
+  static String cleanAnswer(String raw) {
     if (raw == null || raw.isEmpty()) return "";
     String s = THINK_BLOCK.matcher(raw).replaceAll("");
     s = STEP_BLOCK.matcher(s).replaceAll("");
@@ -419,15 +389,5 @@ public class MultiAgentOrchestrator {
     }
   }
 
-  // ========== 错误处理（逻辑已下沉到 StreamErrorHandler；此处仅保留瘦代理方法以减小 diff） ==========
-
-  private String classifyStreamError(Throwable e, boolean firstByteReceived) {
-    return streamErrorHandler.classify(e, firstByteReceived);
-  }
-
-  private String renderStreamErrorMessage(String code, boolean firstByteReceived) {
-    return streamErrorHandler.render(code, firstByteReceived);
-  }
-
-  // 引用构建 / JSON 序列化已下沉到 MetaBuilder
+  // 错误分类 / 引用构建 / JSON 序列化已下沉到 StreamErrorHandler / MetaBuilder
 }

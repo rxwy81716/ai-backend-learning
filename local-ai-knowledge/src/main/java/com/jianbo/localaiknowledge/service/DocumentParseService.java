@@ -7,6 +7,7 @@ import com.jianbo.localaiknowledge.mapper.DocumentTaskMapper;
 import com.jianbo.localaiknowledge.model.DocumentChunk;
 import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.model.DocumentTask.TaskStatus;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBlockingQueue;
 import org.redisson.api.RedissonClient;
@@ -41,6 +42,7 @@ import java.util.Map;
  */
 @Service
 @Slf4j
+@RequiredArgsConstructor
 public class DocumentParseService {
 
   public static final String QUEUE_NAME = "doc:parse:queue";
@@ -53,23 +55,6 @@ public class DocumentParseService {
   private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
   /** RAG 检索结果缓存（入库/删除后主动清除，避免 10min 内新文档检索不到） */
   private final Cache<String, java.util.List<Document>> ragSearchCache;
-
-  public DocumentParseService(
-      EsVectorStoreService esVectorStoreService,
-      DocumentTaskMapper taskMapper,
-      DocumentTaskLogMapper taskLogMapper,
-      DocumentChunkMapper chunkMapper,
-      RedissonClient redissonClient,
-      org.springframework.jdbc.core.JdbcTemplate jdbcTemplate,
-      Cache<String, java.util.List<Document>> ragSearchCache) {
-    this.esVectorStoreService = esVectorStoreService;
-    this.taskMapper = taskMapper;
-    this.taskLogMapper = taskLogMapper;
-    this.chunkMapper = chunkMapper;
-    this.redissonClient = redissonClient;
-    this.jdbcTemplate = jdbcTemplate;
-    this.ragSearchCache = ragSearchCache;
-  }
 
   /** 注册一个新任务（持久化到 DB） */
   public DocumentTask registerTask(String taskId, String fileName, String filePath, long fileSize) {

@@ -152,9 +152,13 @@ public class PlannerAgent implements SpecializedAgent {
         ctx.emitStep("generate", Map.of("iter", iter));
         // 真流式 finalize：跳出 JSON 壳，用自然语言 stream 输出最终答案。
         // 优势：首字节快、token 边生成边吐，而不是等整段 answer 拼完再切片。
-        streamFinalize(llm, baseMsgs, request.question(), step.answer(), sink);
-        ctx.emitStep("done", Map.of("iter", iter, "searchCalls", searchCalls));
-        sink.complete();
+        final int finishedIter = iter;
+        final int finishedSearchCalls = searchCalls;
+        streamFinalize(llm, baseMsgs, request.question(), step.answer(), sink,
+            () -> {
+              ctx.emitStep("done", Map.of("iter", finishedIter, "searchCalls", finishedSearchCalls));
+              sink.complete();
+            });
         return;
       }
 
@@ -223,27 +227,31 @@ public class PlannerAgent implements SpecializedAgent {
 
     // 到达 MAX_ITERATIONS 仍未 finish：兜底直接改走真流式 finalize，丢掉 JSON 壳
     ctx.emitStep("observe", Map.of("warn", "max_iterations_reached"));
-    streamFinalize(llm, baseMsgs, request.question(), null, sink);
-    ctx.emitStep("done", Map.of("searchCalls", searchCalls, "truncated", true));
-    sink.complete();
+    final int truncatedSearchCalls = searchCalls;
+    streamFinalize(llm, baseMsgs, request.question(), null, sink,
+        () -> {
+          ctx.emitStep("done", Map.of("searchCalls", truncatedSearchCalls, "truncated", true));
+          sink.complete();
+        });
   }
 
   /**
    * 真流式收尾：把规划阶段积累的工具结果作为上下文，让 LLM 以自然语言边生成边吐 token。
    *
-   * <p>实现：把 JSON 壳 system prompt 替换为自然语言回答指令，复用 baseMsgs 里已有的工具结果
-   * UserMessage，调用 {@code stream().content()} 把 token 逐片推给 sink。异常时降级到
-   * planner 自己给的 {@code answer} 字段按切片发射，保证用户始终能收到内容。
+   * <p>实现（P1 修复）：原先用 {@code CountDownLatch} 把 reactive 流转同步阻塞，破坏了背压且额外占一个线程。
+   * 现改为纯 reactive 桥接：把上游 {@code stream().content()} 直接 subscribe 到外部 sink，next / error / complete
+   * 三路异步转发；完成/出错后由 {@code onSettled} 回调统一调 {@code sink.complete} 与 emitStep("done")。
    *
    * @param fallbackAnswer 规划器 finish 时自带的 answer，用于真流式失败时兜底；可 null
+   * @param onSettled       流结束（成功 / 错误）后的后续动作：调用者在里面 emit done step + sink.complete
    */
   private void streamFinalize(
       ChatClient llm,
       List<Message> baseMsgs,
       String userQuestion,
       String fallbackAnswer,
-      reactor.core.publisher.FluxSink<String> sink) {
-    // 构造 finalize 专用消息列表：替换 system prompt + 追加一条明确指令
+      reactor.core.publisher.FluxSink<String> sink,
+      Runnable onSettled) {
     List<Message> finalMsgs = new ArrayList<>(baseMsgs);
     if (!finalMsgs.isEmpty() && finalMsgs.get(0) instanceof SystemMessage) {
       finalMsgs.set(0, new SystemMessage(FINALIZE_SYSTEM_PROMPT));
@@ -254,10 +262,8 @@ public class PlannerAgent implements SpecializedAgent {
         "基于以上工具结果，直接以自然语言回答用户问题：" + userQuestion
             + "\n严禁输出 JSON、<think> 标签或元描述（'根据工具结果''我检索到'等）。"));
 
+    final boolean[] gotAny = {false};
     try {
-      // CountDown 结构：同步等待 stream 发射完毕，保证 ReAct 循环退出前 finalize 完成
-      java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
-      final boolean[] gotAny = {false};
       llm.prompt().messages(finalMsgs).stream().content()
           .subscribe(
               chunk -> {
@@ -268,33 +274,30 @@ public class PlannerAgent implements SpecializedAgent {
               },
               err -> {
                 log.warn("[PlannerAgent] finalize 流式异常，降级 fallback: {}", err.getMessage());
-                if (!gotAny[0] && fallbackAnswer != null && !fallbackAnswer.isBlank()) {
-                  emitAsChunks(fallbackAnswer, sink);
-                } else if (!gotAny[0]) {
-                  sink.next("抱歉，最终答案生成失败：" + err.getMessage());
+                if (!gotAny[0]) {
+                  if (fallbackAnswer != null && !fallbackAnswer.isBlank()) {
+                    emitAsChunks(fallbackAnswer, sink);
+                  } else {
+                    sink.next("抱歉，最终答案生成失败：" + err.getMessage());
+                  }
                 }
-                done.countDown();
+                onSettled.run();
               },
-              done::countDown);
-      // 等待流结束；已在 boundedElastic 线程，阻塞 OK
-      done.await();
-      if (!gotAny[0] && fallbackAnswer != null && !fallbackAnswer.isBlank()) {
-        // 流正常结束但没吐任何内容（极少见），用 planner 自带 answer 兜底
-        emitAsChunks(fallbackAnswer, sink);
-      }
-    } catch (InterruptedException ie) {
-      Thread.currentThread().interrupt();
-      log.warn("[PlannerAgent] finalize 被中断");
-      if (fallbackAnswer != null && !fallbackAnswer.isBlank()) {
-        emitAsChunks(fallbackAnswer, sink);
-      }
+              () -> {
+                if (!gotAny[0] && fallbackAnswer != null && !fallbackAnswer.isBlank()) {
+                  // 流正常结束但没吐内容（极少见），用 planner 自带 answer 兜底
+                  emitAsChunks(fallbackAnswer, sink);
+                }
+                onSettled.run();
+              });
     } catch (Exception e) {
-      log.error("[PlannerAgent] finalize 未知异常", e);
+      log.error("[PlannerAgent] finalize 提交订阅异常", e);
       if (fallbackAnswer != null && !fallbackAnswer.isBlank()) {
         emitAsChunks(fallbackAnswer, sink);
       } else {
         sink.next("抱歉，最终答案生成失败：" + e.getMessage());
       }
+      onSettled.run();
     }
   }
 

@@ -1,6 +1,9 @@
 package com.jianbo.localaiknowledge.config;
 
 import com.jianbo.localaiknowledge.utils.JwtUtil;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -45,26 +48,34 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     if (token != null && !token.isBlank()) {
       try {
-        if (jwtUtil.isValid(token)) {
-          Long userId = jwtUtil.getUserId(token);
-          String username = jwtUtil.getUsername(token);
-          List<String> roles = jwtUtil.getRoles(token);
+        // 一次解析拿所有字段（原先 isValid + getUserId + getUsername + getRoles 解析了 4 次同一 token）
+        Claims claims = jwtUtil.parseToken(token);
+        Long userId = Long.valueOf(claims.getSubject());
+        String username = claims.get("username", String.class);
+        @SuppressWarnings("unchecked")
+        List<String> roles = claims.get("roles", List.class);
 
-          List<SimpleGrantedAuthority> authorities =
-              roles.stream().map(SimpleGrantedAuthority::new).toList();
+        List<SimpleGrantedAuthority> authorities =
+            roles == null ? List.of() : roles.stream().map(SimpleGrantedAuthority::new).toList();
 
-          // 用 userId 作为 principal，方便后续获取
-          UsernamePasswordAuthenticationToken authentication =
-              new UsernamePasswordAuthenticationToken(userId, null, authorities);
+        // 用 userId 作为 principal，方便后续获取
+        UsernamePasswordAuthenticationToken authentication =
+            new UsernamePasswordAuthenticationToken(userId, null, authorities);
+        // 附加详情（存 username 方便日志使用）
+        authentication.setDetails(username);
 
-          // 附加详情（存 username 方便日志使用）
-          authentication.setDetails(username);
-
-          SecurityContextHolder.getContext().setAuthentication(authentication);
-        }
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+      } catch (ExpiredJwtException e) {
+        // Token 过期是正常业务现象（用户长时间不操作），INFO 级足够；
+        // 不设认证信息 → Security 后续返回 401，前端跳登录或走 refresh
+        log.info("JWT 已过期 | sub={}, expiredAt={}", e.getClaims().getSubject(), e.getClaims().getExpiration());
+      } catch (JwtException e) {
+        // 签名失败 / 格式不合法 / 不支持的算法 等：通常意味着伪造 / 篡改 / 试探，必须可见
+        log.warn("JWT 验证失败（可能是伪造或试探）| ip={}, ua={}, err={}",
+            request.getRemoteAddr(), request.getHeader("User-Agent"), e.getMessage());
       } catch (Exception e) {
-        log.debug("JWT 解析失败: {}", e.getMessage());
-        // 不设置认证信息，Security 会自动返回 401
+        // 兜底：理论上不应到这里
+        log.error("JWT 处理异常", e);
       }
     }
 

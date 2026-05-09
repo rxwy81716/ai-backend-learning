@@ -69,39 +69,7 @@ public class DocumentController {
       docScope = "PRIVATE";
     }
 
-    String originalName = file.getOriginalFilename();
-    String taskId = UUID.randomUUID().toString().replace("-", "");
-
-    try {
-      Path dirPath = Paths.get(uploadDir);
-      if (!Files.exists(dirPath)) {
-        Files.createDirectories(dirPath);
-      }
-
-      String savedName = taskId + "_" + originalName;
-      Path filePath = dirPath.resolve(savedName);
-      try (var inputStream = file.getInputStream()) {
-        Files.copy(inputStream, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-      }
-
-      log.info("文件已保存: {} ({}字节)", filePath, file.getSize());
-
-      DocumentTask task =
-          documentParseService.registerTask(
-              taskId, originalName, filePath.toString(), file.getSize(), userId, docScope);
-
-      documentParseService.submitToQueue(taskId);
-
-      return Map.of(
-          "taskId", taskId,
-          "fileName", originalName,
-          "fileSize", file.getSize(),
-          "status", task.getStatus(),
-          "docScope", docScope);
-    } catch (IOException e) {
-      log.error("文件保存失败: {}", e.getMessage(), e);
-      throw new IllegalStateException("文件保存失败: " + e.getMessage());
-    }
+    return saveAndDispatch(file, userId, docScope, "");
   }
 
   /**
@@ -127,42 +95,45 @@ public class DocumentController {
       throw new IllegalArgumentException("文件大小不能超过50MB");
     }
 
+    return saveAndDispatch(file, "crawler-bot", "PUBLIC", "[爬虫上传] ");
+  }
+
+  /**
+   * 保存上传文件到 {@code uploadDir}、注册解析任务并入队。
+   *
+   * <p>抽取自 {@link #upload}、{@link #crawlerUpload} 中完全重复的公共逻辑。
+   *
+   * @param logPrefix 日志前缀（如 "[爬虫上传] "），便于区分上传渠道
+   */
+  private Map<String, Object> saveAndDispatch(
+      MultipartFile file, String userId, String docScope, String logPrefix) {
     String originalName = file.getOriginalFilename();
     String taskId = UUID.randomUUID().toString().replace("-", "");
-
     try {
       Path dirPath = Paths.get(uploadDir);
       if (!Files.exists(dirPath)) {
         Files.createDirectories(dirPath);
       }
-
       String savedName = taskId + "_" + originalName;
       Path filePath = dirPath.resolve(savedName);
       try (var inputStream = file.getInputStream()) {
         Files.copy(inputStream, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
       }
-
-      log.info("[爬虫上传] 文件已保存: {} ({}字节)", filePath, file.getSize());
+      log.info("{}文件已保存: {} ({}字节)", logPrefix, filePath, file.getSize());
 
       DocumentTask task =
           documentParseService.registerTask(
-              taskId, originalName, filePath.toString(), file.getSize(), "crawler-bot", "PUBLIC");
-
+              taskId, originalName, filePath.toString(), file.getSize(), userId, docScope);
       documentParseService.submitToQueue(taskId);
 
       return Map.of(
-          "taskId",
-          taskId,
-          "fileName",
-          originalName,
-          "fileSize",
-          file.getSize(),
-          "status",
-          task.getStatus(),
-          "docScope",
-          "PUBLIC");
+          "taskId", taskId,
+          "fileName", originalName,
+          "fileSize", file.getSize(),
+          "status", task.getStatus(),
+          "docScope", docScope);
     } catch (IOException e) {
-      log.error("[爬虫上传] 文件保存失败: {}", e.getMessage(), e);
+      log.error("{}文件保存失败: {}", logPrefix, e.getMessage(), e);
       throw new IllegalStateException("文件保存失败: " + e.getMessage());
     }
   }

@@ -13,7 +13,7 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -117,9 +117,14 @@ public class ChatModelRegistry {
     return modelMap.get(DEFAULT_KEY);
   }
 
-  /** 列出所有可用模型 key（供 /api/rag/models 查询） */
+  /**
+   * 列出所有可用模型 key（供 /api/rag/models 查询）。
+   *
+   * <p>返回 {@link ConcurrentHashMap} keySet 的不可变视图：
+   * 调用方只读访问，避免每次都把整张 map clone 一份再取 keySet 的浪费。
+   */
   public Set<String> availableKeys() {
-    return new LinkedHashMap<>(modelMap).keySet();
+    return Collections.unmodifiableSet(modelMap.keySet());
   }
 
   // ==================== 内部：构建 OpenAI 兼容 ChatModel ====================

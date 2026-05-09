@@ -84,7 +84,7 @@ public class KnowledgeAgent implements SpecializedAgent {
         if (!retryDocs.isEmpty()) {
           ctx.recordInvocation(KnowledgeTools.TOOL_NAME);
           ctx.addDocs(retryDocs);
-          kbResult = formatDocs(retryDocs);
+          kbResult = com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(retryDocs);
         }
       }
     }
@@ -100,7 +100,7 @@ public class KnowledgeAgent implements SpecializedAgent {
         if (!broadDocs.isEmpty()) {
           ctx.recordInvocation(KnowledgeTools.TOOL_NAME);
           ctx.addDocs(broadDocs);
-          kbResult = formatDocs(broadDocs);
+          kbResult = com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(broadDocs);
         }
       }
     }
@@ -131,14 +131,4 @@ public class KnowledgeAgent implements SpecializedAgent {
     return "文档 内容 介绍 概述";
   }
 
-  private String formatDocs(List<org.springframework.ai.document.Document> docs) {
-    StringBuilder sb = new StringBuilder();
-    for (int i = 0; i < docs.size(); i++) {
-      org.springframework.ai.document.Document doc = docs.get(i);
-      String src = String.valueOf(doc.getMetadata().getOrDefault("source", "未知"));
-      sb.append("【").append(i + 1).append("】[来源: ").append(src).append("]\n")
-          .append(doc.getText()).append("\n\n");
-    }
-    return sb.toString();
-  }
 }
