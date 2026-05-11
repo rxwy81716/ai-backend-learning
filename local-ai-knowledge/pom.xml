@@ -157,6 +157,12 @@
             <groupId>io.micrometer</groupId>
             <artifactId>micrometer-registry-prometheus</artifactId>
         </dependency>
+        <!-- ===== MCP Server：把知识库工具暴露为 MCP 协议接口 ===== -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
+
         <!-- Round 4 注：Resilience4j 由本项目的轻量 SimpleCircuitBreaker 替代。
              原因：本机 maven central 被代理 SSL 拦截（cert mismatch），无法拉取
              io.github.resilience4j:* 工件；inline 实现 ≤80 行，覆盖核心场景

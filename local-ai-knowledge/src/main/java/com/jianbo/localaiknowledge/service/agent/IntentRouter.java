@@ -37,9 +37,9 @@ public class IntentRouter {
       - DOCUMENT_OVERVIEW：用户要求总结/概括/整理整个知识库，或询问"有哪些文档""知识库里有什么""列出所有文档"等概览性问题
       - DOCUMENT_SEARCH：用户要求在文档中搜索/查找/检索某个关键词或短语，如"搜索包含XX的文档""查找提到XX的文档""检索XX关键词"
       - HOT_SEARCH：涉及平台热搜、热榜、排行榜、推荐内容、trending，或提到具体平台（B站/微博/知乎/抖音/小红书/GitHub等）并询问推荐、热门、流行、排行等
-      - CHAT：仅限纯闲聊寒暄（你好/再见）、关于助手自身的元问题（你是谁/你能做什么）
-      - KNOWLEDGE：具体问题的检索（某个人物/角色/概念/专业知识/技术问题等）。当你不确定时，返回 KNOWLEDGE
-      重要：除非问题明确属于上述某个其他类别，否则一律返回 KNOWLEDGE。
+      - CHAT：闲聊寒暄（你好/再见）、关于助手自身的元问题（你是谁/你能做什么）、以及通用创作任务（写代码/翻译/写作/数学计算等不需要查阅用户私有文档的通用AI能力请求）
+      - KNOWLEDGE：需要查阅用户上传的私有文档才能回答的问题（某个文档中的人物/角色/概念/条款等）。当你不确定时，返回 KNOWLEDGE
+      重要：如果用户的问题是通用的编程、翻译、写作、数学等任务，不涉及私有文档，应返回 CHAT 而非 KNOWLEDGE。
       """;
 
   /** 热榜关键词集合 */
@@ -65,6 +65,15 @@ public class IntentRouter {
   private static final Set<String> META_KEYWORDS = Set.of(
       "你是谁", "你是什么", "你能做什么", "有哪些功能", "怎么使用",
       "什么模式", "什么模型", "介绍一下你"
+  );
+
+  /** 通用任务关键词：写代码、翻译、写作等不需要知识库的通用 AI 能力 */
+  private static final Set<String> CHAT_TASK_KEYWORDS = Set.of(
+      "写代码", "写一段代码", "写个代码", "编程", "代码示例",
+      "写一个程序", "写个程序", "写脚本", "写一段脚本",
+      "帮我翻译", "翻译一下", "翻译成",
+      "写一篇", "写一段", "帮我写", "写个故事", "写首诗",
+      "算一下", "计算一下", "数学题"
   );
 
   /** 文档内搜索关键词：在文档中搜索/查找指定关键词 */
@@ -159,6 +168,13 @@ public class IntentRouter {
 
     // 元问题 → 通用对话（不需要工具）
     for (String kw : META_KEYWORDS) {
+      if (lower.contains(kw)) {
+        return AgentType.CHAT;
+      }
+    }
+
+    // 通用任务（写代码/翻译/写作等）→ 通用对话
+    for (String kw : CHAT_TASK_KEYWORDS) {
       if (lower.contains(kw)) {
         return AgentType.CHAT;
       }

@@ -91,6 +91,27 @@ export const useMenuStore = defineStore('menu', () => {
         title: '智能问答',
         icon: 'ChatDotRound',
         order: 1
+      },
+      {
+        path: '/skills',
+        name: 'SkillMarket',
+        title: 'Skill 能力市场',
+        icon: 'MagicStick',
+        order: 2
+      },
+      {
+        path: '/finetune',
+        name: 'FineTuneCompare',
+        title: '微调对比',
+        icon: 'DataAnalysis',
+        order: 3
+      },
+      {
+        path: '/mcp',
+        name: 'McpStatus',
+        title: 'MCP 协议',
+        icon: 'Connection',
+        order: 4
       }
     ]
   }

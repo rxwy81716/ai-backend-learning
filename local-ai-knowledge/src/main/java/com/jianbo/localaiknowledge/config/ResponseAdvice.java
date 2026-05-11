@@ -86,8 +86,12 @@ public class ResponseAdvice implements ResponseBodyAdvice<Object> {
       return body;
     }
 
-    // 文件下载（Resource）不包装
+    // 文件下载（Resource / byte[]）不包装
     if (body instanceof org.springframework.core.io.Resource) {
+      return body;
+    }
+    // 二进制数据（文件下载）不包装
+    if (body instanceof byte[]) {
       return body;
     }
 

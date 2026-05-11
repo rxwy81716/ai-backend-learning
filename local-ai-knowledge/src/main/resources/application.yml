@@ -92,6 +92,9 @@ app:
       user-qps: 2                     # 单用户每秒最大请求数
       user-daily: 200                 # 单用户每天最大请求数
       ip-qps: 5                       # 单 IP 每秒最大请求数（同 IP 多账号防刷）
+  vectorstore:
+    pg-vector:
+      enabled: false              # 是否双写PG VectorStore（ES故障时降级用），大文件建议关闭
   rag:
     # 混合检索：向量召回 + BM25 关键词召回 + RRF 融合
     hybrid:

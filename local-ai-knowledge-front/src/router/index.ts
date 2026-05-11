@@ -31,6 +31,15 @@ const UserGuide = () => import('@/views/guide/UserGuide.vue')
 const HotDashboard = () => import('@/views/hot/HotDashboard.vue')
 const HotHistory = () => import('@/views/hot/HotHistory.vue')
 
+// Skill 能力市场
+const SkillMarket = () => import('@/views/skill/SkillMarket.vue')
+
+// 微调对比
+const FineTuneCompare = () => import('@/views/finetune/FineTuneCompare.vue')
+
+// MCP 协议面板
+const McpStatus = () => import('@/views/mcp/McpStatus.vue')
+
 // 错误页面
 const NotFound = () => import('@/views/error/404.vue')
 const Forbidden = () => import('@/views/error/403.vue')
@@ -107,6 +116,24 @@ const privateRoutes: RouteRecordRaw[] = [
             meta: { title: '历史热榜', icon: 'Clock' }
           }
         ]
+      },
+      {
+        path: 'skills',
+        name: 'SkillMarket',
+        component: SkillMarket,
+        meta: { title: 'Skill 能力市场', icon: 'MagicStick' }
+      },
+      {
+        path: 'finetune',
+        name: 'FineTuneCompare',
+        component: FineTuneCompare,
+        meta: { title: '微调对比', icon: 'DataAnalysis' }
+      },
+      {
+        path: 'mcp',
+        name: 'McpStatus',
+        component: McpStatus,
+        meta: { title: 'MCP 协议', icon: 'Connection' }
       },
       {
         path: 'profile',

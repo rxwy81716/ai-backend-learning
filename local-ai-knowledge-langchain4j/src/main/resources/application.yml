@@ -1,0 +1,67 @@
+server:
+  port: 12116
+
+# ===== LLM 配置（手动构建 Bean，不依赖 spring-boot-starter 自动配置） =====
+app:
+  llm:
+    api-key: ${OPENAI_API_KEY:sk-xxx}
+    base-url: ${OPENAI_BASE_URL:https://api.siliconflow.cn/v1}
+    model-name: ${CHAT_MODEL:deepseek-ai/DeepSeek-V3}
+  embedding:
+    api-key: ${EMBEDDING_API_KEY:sk-xxx}
+    base-url: ${EMBEDDING_BASE_URL:https://api.siliconflow.cn/v1}
+    model-name: ${EMBEDDING_MODEL:BAAI/bge-large-zh-v1.5}
+    dimensions: 1024
+  models:
+    glm:
+      api-key: ${GLM_API_KEY:sk-xxx}
+      base-url: https://open.bigmodel.cn/api/paas/v4
+      model-name: glm-4-flash
+
+# ===== Elasticsearch =====
+app.es:
+  uris: ${ES_URIS:http://localhost:9200}
+  index-name: ${ES_INDEX:knowledge_vector_store}
+  username: ${ES_USERNAME:}
+  password: ${ES_PASSWORD:}
+
+# ===== PostgreSQL =====
+spring:
+  datasource:
+    url: jdbc:postgresql://${PG_HOST:localhost}:${PG_PORT:5432}/${PG_DB:ai_knowledge}
+    username: ${PG_USER:postgres}
+    password: ${PG_PASS:postgres}
+    driver-class-name: org.postgresql.Driver
+
+# ===== Redis =====
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASS:}
+
+# ===== MyBatis =====
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+
+# ===== JWT =====
+jwt:
+  secret: ${JWT_SECRET:myDefaultSecretKeyForDevOnly1234567890}
+  expiration: 86400000
+
+# ===== 外部服务 =====
+app.web-search:
+  enabled: ${WEB_SEARCH_ENABLED:false}
+  api-key: ${TAVILY_API_KEY:}
+
+app.rerank:
+  enabled: ${RERANK_ENABLED:true}
+  api-key: ${RERANK_API_KEY:sk-xxx}
+  model: BAAI/bge-reranker-v2-m3
+  base-url: https://api.siliconflow.cn/v1
+
+# ===== 文件上传 =====
+app.upload:
+  dir: ${UPLOAD_DIR:./uploads}
+  max-size: 50MB

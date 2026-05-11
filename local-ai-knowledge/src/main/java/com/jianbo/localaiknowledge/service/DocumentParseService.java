@@ -11,8 +11,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBlockingQueue;
 import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.tika.TikaDocumentReader;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.stereotype.Service;
 
@@ -26,6 +29,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -53,6 +57,12 @@ public class DocumentParseService {
   private final DocumentChunkMapper chunkMapper;
   private final RedissonClient redissonClient;
   private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+  /** PG VectorStore（Spring AI 自动配置，用于 ES 降级） */
+  @Qualifier("vectorStore")
+  private final VectorStore pgVectorStore;
+  /** 是否双写 PG VectorStore（默认 false，大文件建议关闭） */
+  @Value("${app.vectorstore.pg-vector.enabled:false}")
+  private boolean pgVectorEnabled;
   /** RAG 检索结果缓存（入库/删除后主动清除，避免 10min 内新文档检索不到） */
   private final Cache<String, java.util.List<Document>> ragSearchCache;
 
@@ -140,11 +150,13 @@ public class DocumentParseService {
     } catch (Exception e) {
       log.warn("[{}] 重新解析-PG document_chunk 清除失败: {}", taskId, e.getMessage());
     }
-    // 清除旧的 PG vector_store
-    try {
-      deletePgVectorBySource(task.getFileName());
-    } catch (Exception e) {
-      log.warn("[{}] 重新解析-PG vector_store 清除失败: {}", taskId, e.getMessage());
+    // 清除旧的 PG vector_store（仅在开启双写时）
+    if (pgVectorEnabled) {
+      try {
+        deletePgVectorBySource(task.getFileName());
+      } catch (Exception e) {
+        log.warn("[{}] 重新解析-PG vector_store 清除失败: {}", taskId, e.getMessage());
+      }
     }
     // 清空 RAG 缓存
     try {
@@ -189,11 +201,13 @@ public class DocumentParseService {
       log.warn("[{}] PG document_chunk 删除失败: {}", taskId, e.getMessage());
     }
 
-    // 删除PG vector_store 向量数据（按 metadata.source 过滤）
-    try {
-      deletePgVectorBySource(task.getFileName());
-    } catch (Exception e) {
-      log.warn("[{}] PG vector_store 删除失败: {}", taskId, e.getMessage());
+    // 删除PG vector_store 向量数据（仅在开启双写时）
+    if (pgVectorEnabled) {
+      try {
+        deletePgVectorBySource(task.getFileName());
+      } catch (Exception e) {
+        log.warn("[{}] PG vector_store 删除失败: {}", taskId, e.getMessage());
+      }
     }
 
     // 删除本地文件
@@ -273,7 +287,7 @@ public class DocumentParseService {
 
       // ===== 阶段2: 切片（仅 1 次）=====
       updateStatus(task, TaskStatus.IMPORTING);
-      taskLogMapper.insert(taskId, "IMPORT_START", "开始切片+入库（ES向量 + PG原文）");
+      taskLogMapper.insert(taskId, "IMPORT_START", "开始切片+入库（ES向量 + " + (pgVectorEnabled ? "PG向量 + " : "") + "PG原文）");
 
       String clean = com.jianbo.localaiknowledge.utils.TextCleanUtil.clean(rawText);
       List<String> chunks = com.jianbo.localaiknowledge.utils.TextSplitterUtil.splitText(clean);
@@ -287,7 +301,7 @@ public class DocumentParseService {
       task.setImportedChunks(0);
       taskMapper.update(task);
 
-      // ===== 阶段3: 入库（ES 向量 + PG 原文存档）=====
+      // ===== 阶段3: 入库（ES 向量 + [可选]PG 向量 + PG 原文存档）=====
       // 3.1 ES 向量入库（检索主力），带进度回调实时更新 importedChunks
       //     每 500 chunks 更新一次 DB，避免长任务频繁写库
       final int totalChunks = chunks.size();
@@ -299,7 +313,12 @@ public class DocumentParseService {
             }
           });
 
-      // 3.2 PG document_chunk 原文存档（不涉及 embedding，速度很快）
+      // 3.2 PG VectorStore 入库（ES 降级时使用，可选，大文件建议关闭）
+      if (pgVectorEnabled) {
+        importChunksToPgVectorStore(chunks, source, userId, docScope);
+      }
+
+      // 3.3 PG document_chunk 原文存档（不涉及 embedding，速度很快）
       saveChunksToPg(taskId, chunks, source, userId, docScope);
 
       task.setTotalChunks(esCount);
@@ -308,7 +327,7 @@ public class DocumentParseService {
       task.setFinishedAt(LocalDateTime.now());
       taskMapper.update(task);
 
-      taskLogMapper.insert(taskId, "IMPORT_DONE", "入库完成, 共 " + esCount + " 个切片（ES + PG原文）");
+      taskLogMapper.insert(taskId, "IMPORT_DONE", "入库完成, 共 " + esCount + " 个切片（ES向量 + " + (pgVectorEnabled ? "PG向量 + " : "") + "PG原文）");
       log.info("[{}] 入库完成, 共 {} 个切片, 来源: {}", taskId, esCount, source);
 
       // 新文档入库后清空 RAG 检索缓存，保证下一次提问能够实时够检索到。
@@ -346,6 +365,36 @@ public class DocumentParseService {
     } catch (Exception e) {
       log.error("[{}] PG document_chunk 入库失败: {}", taskId, e.getMessage(), e);
       // 不中断主流程，ES 已成功入库
+    }
+  }
+
+  /** 将切片写入 PG VectorStore（ES 降级时使用） */
+  private void importChunksToPgVectorStore(List<String> chunks, String source, String userId, String docScope) {
+    try {
+      if (chunks == null || chunks.isEmpty()) return;
+
+      List<Document> documents = new ArrayList<>(chunks.size());
+      for (int i = 0; i < chunks.size(); i++) {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("source", source);
+        metadata.put("chunk_index", String.valueOf(i));
+        metadata.put("total_chunks", String.valueOf(chunks.size()));
+        metadata.put("doc_scope", docScope != null ? docScope : "PUBLIC");
+        if (userId != null) {
+          metadata.put("user_id", userId);
+        }
+        documents.add(new Document(chunks.get(i), metadata));
+      }
+
+      // 分批写入，避免一次性过大
+      int batchSize = 100;
+      for (int i = 0; i < documents.size(); i += batchSize) {
+        List<Document> batch = documents.subList(i, Math.min(i + batchSize, documents.size()));
+        pgVectorStore.add(batch);
+      }
+      log.info("PG VectorStore 入库 {} 条, source={}", documents.size(), source);
+    } catch (Exception e) {
+      log.warn("PG VectorStore 入库失败（不影响主流程）: {}", e.getMessage());
     }
   }
 

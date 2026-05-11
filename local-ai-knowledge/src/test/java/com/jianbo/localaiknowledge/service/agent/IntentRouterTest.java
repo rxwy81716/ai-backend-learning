@@ -64,6 +64,13 @@ class IntentRouterTest {
         // 文档概览
         "总结知识库, DOCUMENT_OVERVIEW",
         "知识库里有什么, DOCUMENT_OVERVIEW",
+        // 通用任务（写代码/翻译/写作）
+        "帮我写一段python代码, CHAT",
+        "写代码实现冒泡排序, CHAT",
+        "帮我翻译这句话成英文, CHAT",
+        "写一篇关于春天的作文, CHAT",
+        "帮我写个故事, CHAT",
+        "算一下 123 * 456, CHAT",
         // 元/闲聊
         "你是谁, CHAT",
         "你能做什么, CHAT",
