@@ -9,23 +9,28 @@ public class Demo01_Test {
     int[] nums = {-1, 0, 3, 5, 9, 12};
     int target = 9;
     int result = demo.search(nums, target);
+    System.out.println("二分查找");
     System.out.println(result);
 
     int[] nums2 = {0, 1, 2, 2, 3, 0, 4, 2};
     int val = 2;
     int result2 = demo.remove(nums2, val);
+    System.out.println("移除元素");
     System.out.println(result2);
 
     int[] nums3 = {-7, -3, 2, 3, 11};
     int[] result3 = demo.pingfang(nums3);
+    System.out.println("平方排序");
     System.out.println(Arrays.toString(result3));
 
     int[] nums4 = {2, 3, 1, 2, 4, 3};
     int s = 7;
     int res = demo.minSubArrayLen(nums4, s);
+    System.out.println("最小子数组");
     System.out.println(res);
 
     int[][] matrix = demo.generateMatrix(3);
+    System.out.println("螺旋矩阵");
     for (int i = 0; i < matrix.length; i++) {
       System.out.println(Arrays.toString(matrix[i]));
     }
@@ -45,7 +50,8 @@ public class Demo01_Test {
    * <p>- 你可以假设 nums 中的所有元素是不重复的。 - n 将在 [1, 10000]之间。 - nums 的每个元素都将在 [-9999, 9999]之间.*/
 
   public int search(int[] nums, int target) {
-    //todo 二分查找
+    // todo 二分查找
+
     return -1;
   }
 
@@ -60,8 +66,9 @@ public class Demo01_Test {
 
   示例 2: 给定 nums = [0,1,2,2,3,0,4,2], val = 2, 函数应该返回新的长度 5, 并且 nums 中的前五个元素为 0, 1, 3, 0, 4。*/
   public int remove(int[] nums, int val) {
-    //todo 数组移除元素
+    // todo 数组移除元素
     int slow = 0;
+
     return slow;
   }
 
@@ -79,8 +86,9 @@ public class Demo01_Test {
   // - 输入：nums = [-7,-3,2,3,11]
   // - 输出：[4,9,9,49,121]
   public int[] pingfang(int[] nums) {
-    //todo  数组 平方
+    // todo  数组 平方
     int[] result = new int[nums.length];
+
     return result;
   }
 
@@ -99,8 +107,9 @@ public class Demo01_Test {
   // - 1 <= nums[i] <= 10^5
 
   public int minSubArrayLen(int[] nums, int s) {
-    //todo 最小子数组
+    // todo 最小子数组
     int len = Integer.MAX_VALUE;
+
     return len == Integer.MAX_VALUE ? 0 : len;
   }
 
@@ -111,8 +120,9 @@ public class Demo01_Test {
   //
   // 输入: 3 输出: [ [ 1, 2, 3 ], [ 8, 9, 4 ], [ 7, 6, 5 ] ]
   public int[][] generateMatrix(int n) {
-    //todo 螺旋矩阵II
+    // todo 螺旋矩阵II
     int[][] res = new int[n][n];
+
     return res;
   }
 }

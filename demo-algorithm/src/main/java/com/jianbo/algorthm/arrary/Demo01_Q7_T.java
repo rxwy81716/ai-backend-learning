@@ -1,5 +1,8 @@
 package com.jianbo.algorthm.arrary;
 
+import java.util.Arrays;
+import java.util.Scanner;
+
 //  【题目描述】
 // 在一个城市区域内，被划分成了n * m个连续的区块，每个区块都拥有不同的权值，代表着其土地价值。目前，有两家开发公司，A 公司和 B 公司，希望购买这个城市区域的土地。
 // 现在，需要将这个城市区域的所有区块分配给 A 公司和 B 公司。
@@ -26,4 +29,9 @@ package com.jianbo.algorthm.arrary;
 // 【数据范围】：
 // 1 <= n, m <= 100；
 // n 和 m 不同时为 1。
-public class Demo01_Q7_T {}
+public class Demo01_Q7_T {
+  public static void main(String[] args) {
+    Scanner scanner = new Scanner(System.in);
+    //todo 开发商购买土地
+  }
+}

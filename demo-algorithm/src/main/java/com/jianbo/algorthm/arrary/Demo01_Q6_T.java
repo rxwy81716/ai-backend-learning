@@ -26,5 +26,8 @@ import java.util.Scanner;
 public class Demo01_Q6_T {
 
   public static void main(String[] args) {
+    Scanner scanner = new Scanner(System.in);
+    //todo 区间和
+    scanner.close();
   }
 }
