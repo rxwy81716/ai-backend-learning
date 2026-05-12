@@ -18,13 +18,15 @@ import java.util.regex.Pattern;
  * 多 Agent 调度器。
  *
  * <p>职责划分：
+ *
  * <ul>
- *   <li><b>Orchestrator（本类）</b>：消息构建、意图路由、Query Rewrite、
- *       流式后处理（ThinkBlockStripper / cleanAnswer）、META 构建、持久化
+ *   <li><b>Orchestrator（本类）</b>：消息构建、意图路由、Query Rewrite、 流式后处理（ThinkBlockStripper /
+ *       cleanAnswer）、META 构建、持久化
  *   <li><b>SpecializedAgent</b>：各自领域的 system prompt + 工具绑定 + 流式执行
  * </ul>
  *
  * <p>支持两种 chatMode：
+ *
  * <ul>
  *   <li>{@code KNOWLEDGE}（默认）：启用 IntentRouter + 多 Agent 路由
  *   <li>{@code LLM}：强制走 ChatAgent（用户主动选择的逃生口）
@@ -136,9 +138,10 @@ public class MultiAgentOrchestrator {
               }
 
               // 3. 构建 system prompt
-              String basePrompt = forceLlm
-                  ? agent.systemPrompt()
-                  : messageBuilder.resolveAgentSystemPrompt(promptName, agent);
+              String basePrompt =
+                  forceLlm
+                      ? agent.systemPrompt()
+                      : messageBuilder.resolveAgentSystemPrompt(promptName, agent);
               String sysPrompt = thinking ? basePrompt : (NO_THINK_PREFIX + basePrompt);
 
               // 4. 构建消息列表
@@ -156,48 +159,60 @@ public class MultiAgentOrchestrator {
               final RagToolContext ctx = RagToolContext.create(userId);
               ctx.setModelKey(modelKey);
               // 6.0 推送路由事件
-              ctx.emitStep("route", Map.of(
-                  "intent", intent.name(),
-                  "mode", mode,
-                  "model", modelKey == null ? "default" : modelKey));
+              ctx.emitStep(
+                  "route",
+                  Map.of(
+                      "intent",
+                      intent.name(),
+                      "mode",
+                      mode,
+                      "model",
+                      modelKey == null ? "default" : modelKey));
 
-              // 6a. 追问检测：注入上文 context
-              String followUpContext = null;
-              if (sessionId != null && followUpDetector.isFollowUp(question)) {
-                followUpContext = followUpDetector.loadLastAssistantContent(sessionId, mode);
-                if (followUpContext != null) {
-                  log.info("[追问检测] 检测到追问，注入上文 {} 字符 | session={}, question={}",
-                      followUpContext.length(), sessionId, question);
-                }
-              }
-
+              // 6a. Query Rewrite：仅 KNOWLEDGE 模式下进行
               if (!forceLlm && intent == AgentType.KNOWLEDGE) {
-                List<Message> historyOnly = messages.stream()
-                    .filter(m -> !(m instanceof SystemMessage))
-                    .toList();
+                List<Message> historyOnly =
+                    messages.stream().filter(m -> !(m instanceof SystemMessage)).toList();
                 if (historyOnly.size() > 1) {
                   List<Message> prevHistory = historyOnly.subList(0, historyOnly.size() - 1);
                   QueryRewriteService.RewriteResult rewriteResult =
                       queryRewriteService.rewriteWithTrace(prevHistory, question);
                   ctx.recordRewrite(rewriteResult);
                   if (rewriteResult != null && rewriteResult.attempted()) {
-                    ctx.emitStep("rewrite", Map.of(
-                        "changed", rewriteResult.changed(),
-                        "costMs", rewriteResult.costMs(),
-                        "reason", String.valueOf(rewriteResult.reason())));
+                    ctx.emitStep(
+                        "rewrite",
+                        Map.of(
+                            "changed", rewriteResult.changed(),
+                            "costMs", rewriteResult.costMs(),
+                            "reason", String.valueOf(rewriteResult.reason())));
                   }
+                }
+              }
+              // 6b. 追问检测：注入上文 context
+              String followUpContext = null;
+              if (sessionId != null && followUpDetector.isFollowUp(question)) {
+                followUpContext = followUpDetector.loadLastAssistantContent(sessionId, mode);
+                if (followUpContext != null) {
+                  log.info(
+                      "[追问检测] 检测到追问，注入上文 {} 字符 | session={}, question={}",
+                      followUpContext.length(),
+                      sessionId,
+                      question);
                 }
               }
 
               // 7. 构建 AgentRequest 并执行
               // 7a. 追问上下文注入：在上一条用户消息前插入上文
               if (followUpContext != null) {
-                messages.add(messages.size() - 1,
-                    new SystemMessage("【对话上文（用户正在追问此内容）】\n" + followUpContext
-                        + "\n\n用户正在基于以上内容进行追问，请结合上下文理解用户的指代（如'第一个文档''刚才那个'等）。"));
+                messages.add(
+                    messages.size() - 1,
+                    new SystemMessage(
+                        "【对话上文（用户正在追问此内容）】\n"
+                            + followUpContext
+                            + "\n\n用户正在基于以上内容进行追问，请结合上下文理解用户的指代（如'第一个文档''刚才那个'等）。"));
               }
-              AgentRequest request = new AgentRequest(
-                  sessionId, question, userId, messages, ctx, thinking);
+              AgentRequest request =
+                  new AgentRequest(sessionId, question, userId, messages, ctx, thinking);
 
               final String sid = sessionId;
               final String finalMode = mode;
@@ -208,72 +223,104 @@ public class MultiAgentOrchestrator {
               // Agent token 流 + step 事件流 merge：
               //  - step 事件带 [STEP]...[/STEP] 标签，前端可单独解析为执行状态 UI
               //  - step 流在 agent 完成/异常时被 complete，避免挂住 SSE 连接
-              Flux<String> tokenFlux = agent.execute(request)
-                  .doOnSubscribe(s -> ctx.emitStep("generate", Map.of("intent", finalIntent.name())))
-                  .timeout(
-                      reactor.core.publisher.Mono.delay(
-                          Duration.ofSeconds(STREAM_FIRST_BYTE_TIMEOUT_SECONDS)),
-                      ignored -> reactor.core.publisher.Mono.delay(
-                          Duration.ofSeconds(STREAM_IDLE_TIMEOUT_SECONDS)))
-                  .map(stripper::process)
-                  .concatWith(Flux.defer(() -> {
-                    String tail = stripper.flush();
-                    return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
-                  }))
-                  .filter(s -> !s.isEmpty())
-                  .doOnNext(fullAnswer::append)
-                  .doFinally(sig -> ctx.completeSteps());
+              Flux<String> tokenFlux =
+                  agent
+                      .execute(request)
+                      // 副作用钩子：当下游 subscribe 这个 Flux 时（即 SSE 连接建立时），往 stepSink 推一个事件，告诉前端"开始生成了"。
+                      // 前端收到：[STEP]{"stage":"generate","intent":"KNOWLEDGE"}[/STEP]
+                      .doOnSubscribe(
+                          s -> ctx.emitStep("generate", Map.of("intent", finalIntent.name())))
+                      // 双层超时保护，Reactor 的 timeout 重载版本：
+                      // ③a Mono.delay(15s)——首字节超时：从 subscribe 开始计时，15 秒内没收到第一个 token → 抛
+                      // TimeoutException
+                      // ③b ignored -> Mono.delay(25s)——空闲超时：每收到一个 token 后重置计时器，连续 25 秒没有新 token → 抛
+                      // TimeoutException
+                      .timeout(
+                          reactor.core.publisher.Mono.delay(
+                              Duration.ofSeconds(STREAM_FIRST_BYTE_TIMEOUT_SECONDS)),
+                          ignored ->
+                              reactor.core.publisher.Mono.delay(
+                                  Duration.ofSeconds(STREAM_IDLE_TIMEOUT_SECONDS)))
+                      .map(stripper::process)
+                      .concatWith(
+                          Flux.defer(
+                              () -> {
+                                String tail = stripper.flush();
+                                return tail.isEmpty() ? Flux.empty() : Flux.just(tail);
+                              }))
+                      .filter(s -> !s.isEmpty())
+                      .doOnNext(fullAnswer::append)
+                      .doFinally(sig -> ctx.completeSteps());
 
               return Flux.merge(ctx.stepsFlux(), tokenFlux)
-                  .concatWith(Flux.defer(() -> buildMetaFlux(ctx, finalIntent, forceLlm, errorCodeHolder[0])))
-                  .onErrorResume(e -> {
-                    boolean firstByteReceived = !fullAnswer.isEmpty();
-                    String code = streamErrorHandler.classify(e, firstByteReceived);
-                    errorCodeHolder[0] = code;
-                    log.error("Agent 流式异常 | session={}, agent={}, code={}, firstByte={}, err={}",
-                        sid, finalIntent, code, firstByteReceived, e.toString());
-                    String fallback = streamErrorHandler.render(code, firstByteReceived);
-                    fullAnswer.append(fallback);
-                    Map<String, Object> meta = metaBuilder.build(ctx, finalIntent, forceLlm, code);
-                    return Flux.just(fallback, "[META]" + metaBuilder.toJson(meta) + "[/META]");
-                  })
+                  .concatWith(
+                      Flux.defer(
+                          () -> buildMetaFlux(ctx, finalIntent, forceLlm, errorCodeHolder[0])))
+                  .onErrorResume(
+                      e -> {
+                        boolean firstByteReceived = !fullAnswer.isEmpty();
+                        String code = streamErrorHandler.classify(e, firstByteReceived);
+                        errorCodeHolder[0] = code;
+                        log.error(
+                            "Agent 流式异常 | session={}, agent={}, code={}, firstByte={}, err={}",
+                            sid,
+                            finalIntent,
+                            code,
+                            firstByteReceived,
+                            e.toString());
+                        String fallback = streamErrorHandler.render(code, firstByteReceived);
+                        fullAnswer.append(fallback);
+                        Map<String, Object> meta =
+                            metaBuilder.build(ctx, finalIntent, forceLlm, code);
+                        return Flux.just(fallback, "[META]" + metaBuilder.toJson(meta) + "[/META]");
+                      })
                   .doOnCancel(() -> log.info("流式被客户端取消 | session={}", sid))
-                  .doFinally(sig -> {
-                    if (sid == null) return;
-                    String content = cleanAnswer(fullAnswer.toString());
-                    boolean cancelled = sig == reactor.core.publisher.SignalType.CANCEL;
-                    boolean failed = errorCodeHolder[0] != null;
-                    if (content.isBlank() && !cancelled && !failed) {
-                      log.info("流式产出为空，跳过持久化 | session={}", sid);
-                      return;
-                    }
-                    Map<String, Object> metaMap = metaBuilder.build(ctx, finalIntent, forceLlm, errorCodeHolder[0]);
-                    metaMap.put(FollowUpDetector.META_KEY_MODE, finalMode);
-                    if (cancelled) metaMap.put("cancelled", true);
-                    if (cancelled && !content.isEmpty()) {
-                      content = content + "\n\n_[已中断]_";
-                    }
-                    try {
-                      chatHistoryCache.saveMessage(
-                          ChatMessage.of(sid, "assistant", content, metaBuilder.toJson(metaMap), userId));
-                    } catch (Exception persistErr) {
-                      log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
-                    }
-                    log.info(
-                        "MultiAgent 请求完成 | session={}, mode={}, agent={}, source={}, tools={}, hitCount={}, rewriteAttempted={}, cancelled={}, failed={}",
-                        sid, finalMode, finalIntent,
-                        metaMap.get("source"), ctx.getInvokedTools(), ctx.getRetrievedDocs().size(),
-                        ctx.isRewriteAttempted(), cancelled, failed);
-                  });
+                  .doFinally(
+                      sig -> {
+                        if (sid == null) return;
+                        String content = cleanAnswer(fullAnswer.toString());
+                        boolean cancelled = sig == reactor.core.publisher.SignalType.CANCEL;
+                        boolean failed = errorCodeHolder[0] != null;
+                        if (content.isBlank() && !cancelled && !failed) {
+                          log.info("流式产出为空，跳过持久化 | session={}", sid);
+                          return;
+                        }
+                        Map<String, Object> metaMap =
+                            metaBuilder.build(ctx, finalIntent, forceLlm, errorCodeHolder[0]);
+                        metaMap.put(FollowUpDetector.META_KEY_MODE, finalMode);
+                        if (cancelled) metaMap.put("cancelled", true);
+                        if (cancelled && !content.isEmpty()) {
+                          content = content + "\n\n_[已中断]_";
+                        }
+                        try {
+                          chatHistoryCache.saveMessage(
+                              ChatMessage.of(
+                                  sid, "assistant", content, metaBuilder.toJson(metaMap), userId));
+                        } catch (Exception persistErr) {
+                          log.warn("流式 assistant 消息持久化失败: {}", persistErr.getMessage());
+                        }
+                        log.info(
+                            "MultiAgent 请求完成 | session={}, mode={}, agent={}, source={}, tools={}, hitCount={}, rewriteAttempted={}, cancelled={}, failed={}",
+                            sid,
+                            finalMode,
+                            finalIntent,
+                            metaMap.get("source"),
+                            ctx.getInvokedTools(),
+                            ctx.getRetrievedDocs().size(),
+                            ctx.isRewriteAttempted(),
+                            cancelled,
+                            failed);
+                      });
             })
         .subscribeOn(Schedulers.boundedElastic())
         // Round 4：无论成功/失败/取消都记录 chat 总耗时到 Micrometer Timer
-        .doFinally(sig -> {
-          if (ragMetrics != null) {
-            long costMs = (System.nanoTime() - chatStartNanos) / 1_000_000L;
-            ragMetrics.recordChatDuration(modelKey, costMs);
-          }
-        });
+        .doFinally(
+            sig -> {
+              if (ragMetrics != null) {
+                long costMs = (System.nanoTime() - chatStartNanos) / 1_000_000L;
+                ragMetrics.recordChatDuration(modelKey, costMs);
+              }
+            });
   }
 
   // ========================================================================
@@ -281,7 +328,8 @@ public class MultiAgentOrchestrator {
   // ========================================================================
 
   /** META 流：交给 MetaBuilder 构造 map，再包成 [META]…[/META] */
-  private Flux<String> buildMetaFlux(RagToolContext ctx, AgentType intent, boolean forceLlm, String errorCode) {
+  private Flux<String> buildMetaFlux(
+      RagToolContext ctx, AgentType intent, boolean forceLlm, String errorCode) {
     Map<String, Object> meta = metaBuilder.build(ctx, intent, forceLlm, errorCode);
     return Flux.just("[META]" + metaBuilder.toJson(meta) + "[/META]");
   }
@@ -347,7 +395,10 @@ public class MultiAgentOrchestrator {
     }
 
     String flush() {
-      if (inThink) { buffer.setLength(0); return ""; }
+      if (inThink) {
+        buffer.setLength(0);
+        return "";
+      }
       String s = buffer.toString();
       buffer.setLength(0);
       return trimLeadingIfNeeded(s);

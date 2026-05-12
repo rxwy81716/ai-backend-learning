@@ -47,92 +47,110 @@ public class Demo01 {
   // 示例: 输入: 1->2->3->4->5->NULL 输出: 5->4->3->2->1->NULL
 
   public ListNode reverseList(ListNode head) {
-    if (head == null || head.next == null){
-      return head;
-    }
-    ListNode result = reverseList(head.next);
-    head.next.next = head;
-    head.next = null;
-    return result;
-  }
-
-  public ListNode reverseList2(ListNode head) {
     ListNode pre = null;
     ListNode curr = head;
     ListNode temp = null;
-    while (curr != null){
-       temp = curr.next;
-       curr.next = pre;
-       pre = curr;
-       curr = temp;
+    while (curr != null) {
+      temp = curr.next;
+      curr.next = pre;
+      pre = curr;
+      curr = temp;
     }
     return pre;
   }
 
-//  给你一个链表，两两交换其中相邻的节点，并返回交换后链表的头节点。你必须在不修改节点内部的值的情况下完成本题（即，只能进行节点交换）。
-  /**
- * 两两交换链表中的相邻节点，使用递归方式实现
- * @param head 链表的头节点
- * @return 交换相邻节点后的链表头节点
- */
-public ListNode swapPairs(ListNode head) {
-    if (head == null || head.next == null ){
-      return head;
-    }
-    ListNode next = head.next;
-    //进行递归
-    ListNode newNode = swapPairs(next.next);
-    // 这里进行交换
-    next.next = head;
-    head.next = newNode;
-
-    return next;
-  }
-
-  /**
-   * 两两交换链表中的相邻节点，使用虚拟头结点和迭代方式实现
-   *
-   * @param head 链表的头结点
-   * @return 交换相邻节点后的链表头结点
-   */
-  public ListNode swapPairs2(ListNode head) {
-    ListNode dumyhead = new ListNode(-1); // 设置一个虚拟头结点
-   dumyhead.next = head; // 将虚拟头结点指向head，这样方便后面做删除操作
-   ListNode cur = dumyhead;
-   ListNode temp; // 临时节点，保存两个节点后面的节点
-   ListNode firstnode; // 临时节点，保存两个节点之中的第一个节点
-   ListNode secondnode; // 临时节点，保存两个节点之中的第二个节点
-   while (cur.next != null && cur.next.next != null) {
-     temp = cur.next.next.next;
-     firstnode = cur.next;
-     secondnode = cur.next.next;
-     cur.next = secondnode;       // 步骤一
-     secondnode.next = firstnode; // 步骤二
-     firstnode.next = temp;      // 步骤三
-     cur = firstnode; // cur移动，准备下一轮交换
-   }
-   return dumyhead.next;
-  }
-
-  /**
-   * 两两交换链表中的相邻节点，使用迭代方式实现
-   *
-   * @param head 链表头节点
-   * @return 交换相邻节点后的链表头节点
-   */
-  public ListNode swapPairs3(ListNode head) {
+  //  给你一个链表，两两交换其中相邻的节点，并返回交换后链表的头节点。你必须在不修改节点内部的值的情况下完成本题（即，只能进行节点交换）。
+  // 将步骤 2,3 交换顺序，这样不用定义 temp 节点
+  public ListNode swapPairs(ListNode head) {
     ListNode dummy = new ListNode(0, head);
-  ListNode cur = dummy;
-  while (cur.next != null && cur.next.next != null) {
-    ListNode node1 = cur.next;// 第 1 个节点
-    ListNode node2 = cur.next.next;// 第 2 个节点
-    cur.next = node2; // 步骤 1
-    node1.next = node2.next;// 步骤 3
-    node2.next = node1;// 步骤 2
-    cur = cur.next.next;
+    ListNode cur = dummy;
+    while (cur.next != null && cur.next.next != null) {
+      ListNode node1 = cur.next; // 第 1 个节点
+      ListNode node2 = cur.next.next; // 第 2 个节点
+      cur.next = node2; // 步骤 1
+      node1.next = node2.next; // 步骤 3
+      node2.next = node1; // 步骤 2
+      cur = cur.next.next;
+    }
+    return dummy.next;
   }
-  return dummy.next;
- }
+
+  // 给你一个链表，删除链表的倒数第 n 个结点，并且返回链表的头结点。
+  // 进阶：你能尝试使用一趟扫描实现吗？
+  public ListNode removeNthFromEnd(ListNode head, int n) {
+    ListNode result = new ListNode(0, head);
+    ListNode curr = head;
+    ListNode l = result;
+    ListNode r = result;
+    for (int i = 0; i <= n; i++) {
+      r = r.next;
+    }
+    while (r.next != null) {
+      l = l.next;
+      r = r.next;
+    }
+    if (l.next != null) {
+      l.next = l.next.next;
+    }
+    return result.next;
+  }
+
+  // 给你两个单链表的头节点 headA 和 headB ，请你找出并返回两个单链表相交的起始节点。如果两个链表没有交点，返回 null 。
+  public ListNode getIntersectionNode(ListNode headA, ListNode headB) {
+    ListNode p1 = headA, p2 = headB;
+    while (p1 != p2) {
+      if (p1 == null) {
+        p1 = headB;
+      } else {
+        p1 = p1.next;
+      }
+      if (p2 == null) {
+        p2 = headA;
+      } else {
+        p2 = p2.next;
+      }
+    }
+    return p1;
+  }
 
 
+  public ListNode getIntersectionNode2(ListNode headA, ListNode headB) {
+    if (headA == null || headB == null) {
+      return null;
+    }
+    ListNode a = headA;
+    ListNode b = headB;
+    int aSize = 0, bSize = 0;
+    while (a != null) {
+      aSize = aSize + 1;
+      a = a.next;
+    }
+
+    while (b != null) {
+      bSize = bSize + 1;
+      b = b.next;
+    }
+    a = headA;
+    b = headB;
+    if (bSize > aSize) {
+      int tempLen = aSize;
+      aSize = bSize;
+      bSize = tempLen;
+      ListNode temp = a;
+      a = b;
+      b = temp;
+    }
+    int gap = aSize - bSize;
+    while (gap-- > 0) {
+      a = a.next;
+    }
+    while (a != null) {
+      if (a == b) {
+        return a;
+      }
+      a = a.next;
+      b = b.next;
+    }
+    return null;
+  }
 }
