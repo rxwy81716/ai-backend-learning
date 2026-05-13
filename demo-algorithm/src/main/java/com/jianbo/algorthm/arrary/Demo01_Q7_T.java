@@ -33,5 +33,47 @@ public class Demo01_Q7_T {
   public static void main(String[] args) {
     Scanner scanner = new Scanner(System.in);
     //todo 开发商购买土地
+    int n = scanner.nextInt();
+    int m = scanner.nextInt();
+    int[][] arr = new int[n][m];
+    int total = 0;
+    for(int i = 0; i < n; i++) {
+      for(int j = 0; j < m; j++) {
+        arr[i][j] = scanner.nextInt();
+        total += arr[i][j];
+      }
+    }
+
+    int[] hang = new int[n];
+    for(int i = 0; i < n; i++) {
+      int sum = 0;
+      for(int j = 0; j < m; j++) {
+        sum+= arr[i][j];
+      }
+      hang[i] = sum;
+    }
+
+    int[] lie = new int[m];
+    for(int i = 0; i < m; i++) {
+      int sum = 0;
+      for(int j = 0; j < n; j++) {
+        sum+= arr[j][i];
+      }
+      lie[i] = sum;
+    }
+
+    int hangSum = 0;
+    int min = Integer.MAX_VALUE;
+    for(int i = 0; i < hang.length; i++) {
+      hangSum += hang[i];
+      min = Math.min(Math.abs(total-hangSum),min);
+    }
+    int lieSum = 0;
+    for(int i = 0; i < lie.length; i++) {
+      lieSum += lie[i];
+      min = Math.min(Math.abs(total - lieSum),min);
+    }
+    System.out.println(min);
+    scanner.close();
   }
 }

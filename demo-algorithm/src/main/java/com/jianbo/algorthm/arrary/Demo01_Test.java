@@ -51,7 +51,17 @@ public class Demo01_Test {
 
   public int search(int[] nums, int target) {
     // todo 二分查找
-
+    int l = 0, r = nums.length - 1;
+    while (l <= r) {
+      int mid = l + (r - l) / 2;
+      if (nums[mid] > target) {
+        r = mid - 1;
+      } else if (nums[mid] < target) {
+        l = mid + 1;
+      } else {
+        return mid;
+      }
+    }
     return -1;
   }
 
@@ -68,7 +78,11 @@ public class Demo01_Test {
   public int remove(int[] nums, int val) {
     // todo 数组移除元素
     int slow = 0;
-
+    for (int fast = 0; fast < nums.length; fast++) {
+      if (nums[fast] != val) {
+        nums[slow++] = nums[fast];
+      }
+    }
     return slow;
   }
 
@@ -88,7 +102,15 @@ public class Demo01_Test {
   public int[] pingfang(int[] nums) {
     // todo  数组 平方
     int[] result = new int[nums.length];
-
+    int l = 0, r = nums.length - 1;
+    int index = nums.length - 1;
+    while (l <= r) {
+      if (nums[l] * nums[l] > nums[r] * nums[r]) {
+        result[index--] = nums[l] * nums[l++];
+      } else {
+        result[index--] = nums[r] * nums[r--];
+      }
+    }
     return result;
   }
 
@@ -106,10 +128,19 @@ public class Demo01_Test {
   // - 1 <= nums.length <= 10^5
   // - 1 <= nums[i] <= 10^5
 
-  public int minSubArrayLen(int[] nums, int s) {
+  public int minSubArrayLen(int[] nums, int target) {
     // todo 最小子数组
     int len = Integer.MAX_VALUE;
-
+    int start = 0;
+    int sum = 0;
+    for (int i = 0; i < nums.length; i++) {
+      sum += nums[i];
+      while (sum >= target) {
+        len = Math.min(len, i - start + 1);
+        sum -= nums[start];
+        start++;
+      }
+    }
     return len == Integer.MAX_VALUE ? 0 : len;
   }
 
@@ -122,6 +153,40 @@ public class Demo01_Test {
   public int[][] generateMatrix(int n) {
     // todo 螺旋矩阵II
     int[][] res = new int[n][n];
+    int startX = 0, startY = 0;
+    int loop = 1;
+    int offset = 1;
+    int count = 1;
+    int i, j;
+    int lo = n / 2;
+    while (loop <= lo) {
+      //上面的一行
+      for(j = startY; j < n-offset; j++) {
+        res[startX][j] = count++;
+      }
+
+      //右侧一列
+      for(i = startX; i < n-offset; i++) {
+        res[i][j] = count++;
+      }
+
+      //底下一行 倒序
+      for (;j>startY;j--){
+        res[i][j] = count++;
+      }
+
+      //左侧一列 倒序
+      for (;i> startX;i--){
+        res[i][j] = count++;
+      }
+      startX++;
+      startY++;
+      loop++;
+      offset++;
+    }
+    if (n%2 == 1){
+      res[lo][lo] = n*n;
+    }
 
     return res;
   }

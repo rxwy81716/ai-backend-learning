@@ -1,5 +1,6 @@
 package com.jianbo.algorthm.arrary;
 
+import java.util.Arrays;
 import java.util.Scanner;
 
 // ==================================================
@@ -27,7 +28,27 @@ public class Demo01_Q6_T {
 
   public static void main(String[] args) {
     Scanner scanner = new Scanner(System.in);
-    //todo 区间和
+    // todo 区间和
+    int len = scanner.nextInt();
+    int[] arr = new int[len];
+    int[] sums = new int[len];
+    int sum = 0;
+    for (int i = 0; i < len; i++) {
+      arr[i] = scanner.nextInt();
+      sum+=arr[i];
+      sums[i] = sum;
+    }
+    System.out.println(Arrays.toString(arr));
+    System.out.println(Arrays.toString(sums));
+    while (scanner.hasNext()){
+      int m = scanner.nextInt();
+      int n = scanner.nextInt();
+      if (m == 0){
+        System.out.println(sums[n]);
+      }else {
+        System.out.println(sums[n] - sums[m-1]);
+      }
+    }
     scanner.close();
   }
 }
