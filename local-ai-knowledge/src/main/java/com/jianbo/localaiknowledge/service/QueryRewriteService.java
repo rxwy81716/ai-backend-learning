@@ -1,5 +1,6 @@
 package com.jianbo.localaiknowledge.service;
 
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -12,6 +13,8 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -40,6 +43,20 @@ public class QueryRewriteService {
       String query, boolean attempted, boolean changed, long costMs, String reason) {}
 
   private final ChatModel chatModel;
+  private final ExecutorService rewriteExecutor;
+
+  @PreDestroy
+  public void shutdown() {
+    rewriteExecutor.shutdown();
+    try {
+      if (!rewriteExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+        rewriteExecutor.shutdownNow();
+      }
+    } catch (InterruptedException e) {
+      rewriteExecutor.shutdownNow();
+      Thread.currentThread().interrupt();
+    }
+  }
 
   @Value("${app.rag.query-rewrite.enabled:true}")
   private boolean enabled;
@@ -59,6 +76,11 @@ public class QueryRewriteService {
 
   public QueryRewriteService(ChatModel chatModel) {
     this.chatModel = chatModel;
+    this.rewriteExecutor = Executors.newFixedThreadPool(2, r -> {
+      Thread t = new Thread(r, "query-rewrite-");
+      t.setDaemon(true);
+      return t;
+    });
   }
 
   private static final String REWRITE_SYSTEM_PROMPT =
@@ -112,7 +134,9 @@ public class QueryRewriteService {
 
       Prompt prompt = new Prompt(messages);
       String rewritten =
-          CompletableFuture.supplyAsync(() -> chatModel.call(prompt).getResult().getOutput().getText())
+          CompletableFuture.supplyAsync(
+                  () -> chatModel.call(prompt).getResult().getOutput().getText(),
+                  rewriteExecutor)
               .get(timeoutMs, TimeUnit.MILLISECONDS);
       long cost = System.currentTimeMillis() - t0;
 

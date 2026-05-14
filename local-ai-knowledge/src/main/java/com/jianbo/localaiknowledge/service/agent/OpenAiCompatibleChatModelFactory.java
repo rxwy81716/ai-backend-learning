@@ -6,6 +6,9 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import java.net.http.HttpClient;
+import java.time.Duration;
+
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -19,6 +22,17 @@ import org.springframework.web.client.RestClient;
 @Component
 public class OpenAiCompatibleChatModelFactory {
 
+  private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+  private static final Duration READ_TIMEOUT = Duration.ofSeconds(30);
+
+  private static JdkClientHttpRequestFactory createRequestFactory() {
+    JdkClientHttpRequestFactory factory =
+        new JdkClientHttpRequestFactory(
+            HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT).build());
+    factory.setReadTimeout(READ_TIMEOUT);
+    return factory;
+  }
+
   public ChatModel createChatModel(
       String baseUrl,
       String apiKey,
@@ -31,7 +45,7 @@ public class OpenAiCompatibleChatModelFactory {
         || model == null || model.isBlank()) {
       throw new IllegalArgumentException("baseUrl、apiKey、model 不能为空");
     }
-    RestClient.Builder rc = RestClient.builder().requestFactory(new JdkClientHttpRequestFactory());
+    RestClient.Builder rc = RestClient.builder().requestFactory(createRequestFactory());
     OpenAiApi.Builder apiBuilder =
         OpenAiApi.builder().baseUrl(baseUrl.trim()).apiKey(apiKey.trim()).restClientBuilder(rc);
     if (completionsPath != null && !completionsPath.isBlank()) {
