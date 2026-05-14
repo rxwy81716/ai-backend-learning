@@ -1,6 +1,8 @@
 package com.jianbo.localaiknowledge.config;
 
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.ViewControllerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -16,6 +18,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  */
 @Configuration
 public class WebMvcConfig implements WebMvcConfigurer {
+
+  @Override
+  public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
+    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+    executor.setCorePoolSize(4);
+    executor.setMaxPoolSize(8);
+    executor.setQueueCapacity(100);
+    executor.setThreadNamePrefix("mvc-async-");
+    executor.initialize();
+    configurer.setTaskExecutor(executor);
+  }
 
   @Override
   public void addCorsMappings(CorsRegistry registry) {

@@ -9,6 +9,7 @@ import org.springframework.ai.document.Document;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -70,6 +71,9 @@ public class RagToolContext {
   /** 知识库工具命中的文档（用于构建 references） */
   private final List<Document> retrievedDocs = new CopyOnWriteArrayList<>();
 
+  /** 首轮检索结果（追问检索为空时，用于扩展上下文） */
+  private volatile List<Document> firstRetrievalDocs;
+
   private RagToolContext(String userId) {
     this.userId = userId;
   }
@@ -106,6 +110,24 @@ public class RagToolContext {
     if (docs != null && !docs.isEmpty()) {
       retrievedDocs.addAll(docs);
     }
+  }
+
+  /**
+   * 记录首轮检索结果（仅首次记录有效）。
+   * 用于追问检索为空时扩展上下文。
+   */
+  public void recordFirstRetrieval(List<Document> docs) {
+    if (this.firstRetrievalDocs == null && docs != null && !docs.isEmpty()) {
+      this.firstRetrievalDocs = new ArrayList<>(docs);
+    }
+  }
+
+  public List<Document> getFirstRetrievalDocs() {
+    return firstRetrievalDocs;
+  }
+
+  public boolean hasFirstRetrieval() {
+    return firstRetrievalDocs != null && !firstRetrievalDocs.isEmpty();
   }
 
   // ==================== 执行状态事件流 ====================

@@ -9,12 +9,12 @@ import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 
 /**
  * 知识库专家 Agent：负责企业私域文档检索 + 精准引用回答。
  *
- * <p>仅绑定 {@link KnowledgeTools#searchKnowledgeBase} 一个工具，
- * prompt 专注于归因规则和引用规范，比原 191 行大 prompt 精简且精准。
+ * <p>采用策略链模式替代原有的三级嵌套 if-else，提升可读性和可扩展性。
  */
 @Component
 @Slf4j
@@ -56,11 +56,25 @@ public class KnowledgeAgent implements SpecializedAgent {
     return SYSTEM_PROMPT;
   }
 
-  /** 元描述词：去掉后能让检索更精准（用户说"帮我总结知识库内容"→ 这些词不应作为检索query） */
+  /** 元描述词：去掉后能让检索更精准 */
   private static final java.util.regex.Pattern META_WORDS = java.util.regex.Pattern.compile(
       "帮我|请你?|总结一下|总结|归纳|概括|梳理|整理|列出|列举|知识库中?的?|文档中?的?|里面?的?|核心|重点|要点|所有|全部|有哪些|是什么|什么");
 
   private static final int RETRY_TOP_K = 8;
+
+  /** 检索结果封装 */
+  public record RetrievalResult(String content, boolean success) {
+    public static RetrievalResult success(String content) { return new RetrievalResult(content, true); }
+    public static RetrievalResult failure() { return new RetrievalResult(null, false); }
+  }
+
+  /**
+   * 检索策略接口 - 支持链式调用
+   */
+  @FunctionalInterface
+  private interface RetrievalStrategy {
+    RetrievalResult search(RagToolContext ctx, String question, String userId);
+  }
 
   @Override
   public Flux<String> execute(AgentRequest request) {
@@ -69,47 +83,27 @@ public class KnowledgeAgent implements SpecializedAgent {
     org.springframework.ai.chat.model.ToolContext toolCtx =
         new org.springframework.ai.chat.model.ToolContext(Map.of(KnowledgeTools.CTX_KEY, ctx));
 
-    // 1. 主动检索知识库（用 rewrite query 或原始问题）
-    String searchQuery = ctx.getSearchQuery(request.question());
-    String kbResult = knowledgeTools.searchKnowledgeBase(searchQuery, toolCtx);
+    // 构建检索策略链
+    List<RetrievalStrategy> strategyChain = List.of(
+        // 策略1：精确检索（原始问题）
+        new PreciseRetrievalStrategy(),
+        // 策略2：首轮复用（追问扩展）
+            new FirstRetrievalReuseStrategy(),
+        // 策略3：去元词重试
+        new StripMetaRetryStrategy(),
+        // 策略4：宽泛检索兜底
+        new BroadRetrievalStrategy()
+    );
 
-    // 2. 检索为空时：去掉元描述词，直接调 HybridSearchService 绕过 getSearchQuery
-    if (ctx.getRetrievedDocs().isEmpty()) {
-      String stripped = META_WORDS.matcher(request.question()).replaceAll("").trim();
-      if (stripped.length() >= 2) {
-        log.info("[KnowledgeAgent] 首次检索为空，去元词重试 | original={}, retry={}", searchQuery, stripped);
-        List<org.springframework.ai.document.Document> retryDocs =
-            hybridSearchService.searchWithOwnership(stripped, userId, RETRY_TOP_K);
-        if (!retryDocs.isEmpty()) {
-          ctx.recordInvocation(KnowledgeTools.TOOL_NAME);
-          ctx.addDocs(retryDocs);
-          kbResult = com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(retryDocs);
-        }
-      }
-    }
-
-    // 3. 仍然为空：宽泛检索（不传具体 query，直接搜索用户文档的高相关片段）
-    if (ctx.getRetrievedDocs().isEmpty()) {
-      // 尝试用文档文件名关键词检索（从 question 中提取实体，或用 "文档 资料" 等通用词）
-      String broadQuery = extractBroadQuery(request.question());
-      if (broadQuery != null) {
-        log.info("[KnowledgeAgent] 二次检索为空，宽泛检索 | broadQuery={}", broadQuery);
-        List<org.springframework.ai.document.Document> broadDocs =
-            hybridSearchService.searchWithOwnership(broadQuery, userId, RETRY_TOP_K);
-        if (!broadDocs.isEmpty()) {
-          ctx.recordInvocation(KnowledgeTools.TOOL_NAME);
-          ctx.addDocs(broadDocs);
-          kbResult = com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(broadDocs);
-        }
-      }
-    }
+    // 按策略链顺序执行，直到成功
+    String kbResult = executeStrategyChain(strategyChain, ctx, request.question(), userId, toolCtx);
 
     // 将检索结果注入上下文
     List<Message> augmentedMessages = new java.util.ArrayList<>(request.messages());
     augmentedMessages.add(augmentedMessages.size() - 1,
         new SystemMessage("【知识库检索结果】\n" + kbResult + "\n请基于以上检索结果回答用户问题。如果检索结果包含多个文档片段，请综合整理后回答。"));
 
-    // 按 RagToolContext 中的 modelKey 解析：系统 key 走注册表，user:alias 走库表 + 本地缓存（ChatClientResolver）
+    // 按 RagToolContext 中的 modelKey 解析
     return chatClientResolver
         .resolve(ctx.getUserId(), ctx.getModelKey())
         .prompt()
@@ -118,19 +112,95 @@ public class KnowledgeAgent implements SpecializedAgent {
         .content();
   }
 
-  /**
-   * 从问题中提取宽泛检索词。
-   * 策略：如果去元词后为空（纯概括性问题），用一个高频通用词做向量检索。
-   */
+  /** 执行策略链，直到获得成功结果 */
+  private String executeStrategyChain(
+      List<RetrievalStrategy> chain, RagToolContext ctx, String question, String userId,
+      org.springframework.ai.chat.model.ToolContext toolCtx) {
+    for (RetrievalStrategy strategy : chain) {
+      RetrievalResult result = strategy.search(ctx, question, userId);
+      if (result.success()) {
+        return result.content();
+      }
+    }
+    return "知识库暂无相关内容";
+  }
+
+  /** 策略1：精确检索（原始问题或重写后的问题） */
+  private class PreciseRetrievalStrategy implements RetrievalStrategy {
+    @Override
+    public RetrievalResult search(RagToolContext ctx, String question, String userId) {
+      String searchQuery = ctx.getSearchQuery(question);
+      String result = knowledgeTools.searchKnowledgeBase(searchQuery,
+          new org.springframework.ai.chat.model.ToolContext(Map.of(KnowledgeTools.CTX_KEY, ctx)));
+      if (!ctx.getRetrievedDocs().isEmpty()) {
+        log.info("[KnowledgeAgent] 精确检索成功, query={}", searchQuery);
+        return RetrievalResult.success(result);
+      }
+      return RetrievalResult.failure();
+    }
+  }
+
+  /** 策略2：首轮检索结果复用（追问场景） */
+  private class FirstRetrievalReuseStrategy implements RetrievalStrategy {
+    @Override
+    public RetrievalResult search(RagToolContext ctx, String question, String userId) {
+      if (!ctx.hasFirstRetrieval() || ctx.getRetrievedDocs().isEmpty()) {
+        return RetrievalResult.failure();
+      }
+      log.info("[KnowledgeAgent] 首轮检索结果复用, count={}", ctx.getFirstRetrievalDocs().size());
+      return RetrievalResult.success(
+          com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(ctx.getFirstRetrievalDocs()));
+    }
+  }
+
+  /** 策略3：去元词重试 */
+  private class StripMetaRetryStrategy implements RetrievalStrategy {
+    @Override
+    public RetrievalResult search(RagToolContext ctx, String question, String userId) {
+      String searchQuery = ctx.getSearchQuery(question);
+      String stripped = META_WORDS.matcher(question).replaceAll("").trim();
+      if (stripped.length() < 2) {
+        return RetrievalResult.failure();
+      }
+      log.info("[KnowledgeAgent] 去元词重试, original={}, retry={}", searchQuery, stripped);
+      List<org.springframework.ai.document.Document> docs =
+          hybridSearchService.searchWithOwnership(stripped, userId, RETRY_TOP_K);
+      if (!docs.isEmpty()) {
+        ctx.recordInvocation(KnowledgeTools.TOOL_NAME);
+        ctx.addDocs(docs);
+        return RetrievalResult.success(com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(docs));
+      }
+      return RetrievalResult.failure();
+    }
+  }
+
+  /** 策略4：宽泛检索兜底 */
+  private class BroadRetrievalStrategy implements RetrievalStrategy {
+    @Override
+    public RetrievalResult search(RagToolContext ctx, String question, String userId) {
+      String broadQuery = extractBroadQuery(question);
+      if (broadQuery == null) {
+        return RetrievalResult.failure();
+      }
+      log.info("[KnowledgeAgent] 宽泛检索兜底, broadQuery={}", broadQuery);
+      List<org.springframework.ai.document.Document> docs =
+          hybridSearchService.searchWithOwnership(broadQuery, userId, RETRY_TOP_K);
+      if (!docs.isEmpty()) {
+        ctx.recordInvocation(KnowledgeTools.TOOL_NAME);
+        ctx.addDocs(docs);
+        return RetrievalResult.success(com.jianbo.localaiknowledge.utils.RagFormatUtil.formatDocs(docs));
+      }
+      return RetrievalResult.failure();
+    }
+  }
+
+  /** 从问题中提取宽泛检索词 */
   private String extractBroadQuery(String question) {
-    // 去掉标点和空白，看看剩下什么实质内容
     String cleaned = question.replaceAll("[\\p{Punct}\\s，。？！、]+", " ").trim();
     String stripped = META_WORDS.matcher(cleaned).replaceAll("").trim();
     if (stripped.length() >= 2) {
       return stripped;
     }
-    // 纯元词问题（如"帮我总结知识库核心内容"），用通用检索词尝试拉取任意文档
     return "文档 内容 介绍 概述";
   }
-
 }

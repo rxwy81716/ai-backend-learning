@@ -2,12 +2,12 @@ package com.jianbo.localaiknowledge.controller;
 
 import com.jianbo.localaiknowledge.config.ForbiddenException;
 import com.jianbo.localaiknowledge.config.UnauthorizedException;
-import com.jianbo.localaiknowledge.mapper.ChatFeedbackMapper;
 import com.jianbo.localaiknowledge.mapper.DocumentTaskMapper;
 import com.jianbo.localaiknowledge.model.ChatMessage;
 import com.jianbo.localaiknowledge.model.ChatSession;
 import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.model.SystemPrompt;
+import com.jianbo.localaiknowledge.service.ChatFeedbackService;
 import com.jianbo.localaiknowledge.service.ChatHistoryCacheService;
 import com.jianbo.localaiknowledge.service.EsKeywordSearchService;
 import com.jianbo.localaiknowledge.service.agent.ChatModelRegistry;
@@ -49,7 +49,7 @@ public class RagController {
   private final ChatHistoryCacheService chatHistoryCache;
   private final SystemPromptService promptService;
   private final RedissonClient redissonClient;
-  private final ChatFeedbackMapper feedbackMapper;
+  private final ChatFeedbackService chatFeedbackService;
   private final DocumentTaskMapper documentTaskMapper;
   private final EsKeywordSearchService keywordSearchService;
   private final ChatModelRegistry chatModelRegistry;
@@ -280,15 +280,7 @@ public class RagController {
     }
     long messageId = Long.parseLong(String.valueOf(midObj));
     int rating = Integer.parseInt(String.valueOf(ratingObj));
-    if (rating != 1 && rating != -1) {
-      throw new IllegalArgumentException("rating 仅支持 1 或 -1");
-    }
-    requireSessionOwnership(sessionId);
-    if (!feedbackMapper.isAssistantMessageInSession(messageId, sessionId)) {
-      throw new IllegalArgumentException("该消息不存在或不属于当前会话");
-    }
-    feedbackMapper.upsert(sessionId, messageId, userId, rating, comment);
-    return Map.of("ok", true, "messageId", messageId, "rating", rating);
+    return chatFeedbackService.feedback(messageId, rating, sessionId, userId, comment);
   }
 
   // ==================== Prompt 管理 ====================

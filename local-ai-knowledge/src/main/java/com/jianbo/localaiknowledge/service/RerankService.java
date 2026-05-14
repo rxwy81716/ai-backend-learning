@@ -60,8 +60,11 @@ public class RerankService {
   @Value("${app.rag.rerank.api-key:}")
   private String apiKey;
 
-  @Value("${app.rag.rerank.timeout-ms:2000}")
+  @Value("${app.rag.rerank.timeout-ms:5000}")
   private long timeoutMs;
+
+  @Value("${app.rag.rerank.max-retries:2}")
+  private int maxRetries;
 
   @Value("${app.rag.rerank.max-doc-chars:2000}")
   private int maxDocChars;
@@ -95,74 +98,86 @@ public class RerankService {
       return candidates.subList(0, Math.min(topN, candidates.size()));
     }
 
-    try {
-      long t0 = System.currentTimeMillis();
+    return rerankWithRetry(query, candidates, topN);
+  }
 
-      // 构建请求体
-      List<String> docTexts = new ArrayList<>(candidates.size());
-      for (Document doc : candidates) {
-        docTexts.add(truncateDoc(doc.getText()));
-      }
+  /** 带重试的 Rerank 调用 */
+  private List<Document> rerankWithRetry(String query, List<Document> candidates, int topN) {
+    Exception lastException = null;
+    for (int attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        long t0 = System.currentTimeMillis();
 
-      Map<String, Object> requestBody = new HashMap<>();
-      requestBody.put("model", model);
-      requestBody.put("query", query);
-      requestBody.put("documents", docTexts);
-      requestBody.put("top_n", Math.min(topN, candidates.size()));
-      requestBody.put("return_documents", false);
-
-      String responseStr = createRestClient().post()
-          .uri(apiUrl)
-          .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
-          .contentType(MediaType.APPLICATION_JSON)
-          .body(objectMapper.writeValueAsString(requestBody))
-          .retrieve()
-          .body(String.class);
-
-      JsonNode root = objectMapper.readTree(responseStr);
-      JsonNode results = root.get("results");
-      if (results == null || !results.isArray()) {
-        log.warn("Rerank API 返回格式异常，跳过重排 | response={}", responseStr);
-        return candidates.subList(0, Math.min(topN, candidates.size()));
-      }
-
-      List<Document> reranked = new ArrayList<>(results.size());
-      List<Double> acceptedScores = new ArrayList<>();
-      for (JsonNode item : results) {
-        int index = item.get("index").asInt();
-        double score = item.get("relevance_score").asDouble();
-
-        if (score < scoreThreshold) {
-          continue;
+        // 构建请求体
+        List<String> docTexts = new ArrayList<>(candidates.size());
+        for (Document doc : candidates) {
+          docTexts.add(truncateDoc(doc.getText()));
         }
 
-        if (index >= 0 && index < candidates.size()) {
-          Document origin = candidates.get(index);
-          Map<String, Object> meta = new HashMap<>(origin.getMetadata());
-          meta.put("rerank_score", score);
-          reranked.add(new Document(origin.getId(), origin.getText(), meta));
-          acceptedScores.add(score);
+        Map<String, Object> requestBody = new HashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("query", query);
+        requestBody.put("documents", docTexts);
+        requestBody.put("top_n", Math.min(topN, candidates.size()));
+        requestBody.put("return_documents", false);
+
+        String responseStr = createRestClient().post()
+            .uri(apiUrl)
+            .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
+            .contentType(MediaType.APPLICATION_JSON)
+            .body(objectMapper.writeValueAsString(requestBody))
+            .retrieve()
+            .body(String.class);
+
+        JsonNode root = objectMapper.readTree(responseStr);
+        JsonNode results = root.get("results");
+        if (results == null || !results.isArray()) {
+          log.warn("Rerank API 返回格式异常，跳过重排 | response={}", responseStr);
+          return candidates.subList(0, Math.min(topN, candidates.size()));
+        }
+
+        List<Document> reranked = new ArrayList<>(results.size());
+        List<Double> acceptedScores = new ArrayList<>();
+        for (JsonNode item : results) {
+          int index = item.get("index").asInt();
+          double score = item.get("relevance_score").asDouble();
+
+          if (score < scoreThreshold) {
+            continue;
+          }
+
+          if (index >= 0 && index < candidates.size()) {
+            Document origin = candidates.get(index);
+            Map<String, Object> meta = new HashMap<>(origin.getMetadata());
+            meta.put("rerank_score", score);
+            reranked.add(new Document(origin.getId(), origin.getText(), meta));
+            acceptedScores.add(score);
+          }
+        }
+
+        long cost = System.currentTimeMillis() - t0;
+        log.info(
+            "Rerank | model={}, query={}, candidates={}, survived={}, cost={}ms, topScores={}",
+            model,
+            query,
+            candidates.size(),
+            reranked.size(),
+            cost,
+            summarizeScores(acceptedScores));
+
+        return reranked.isEmpty()
+            ? candidates.subList(0, Math.min(topN, candidates.size()))
+            : reranked;
+
+      } catch (Exception e) {
+        lastException = e;
+        if (attempt < maxRetries - 1) {
+          log.warn("Rerank 调用失败，重试第 {} 次 | err={}", attempt + 1, e.getMessage());
         }
       }
-
-      long cost = System.currentTimeMillis() - t0;
-      log.info(
-          "🎯 Rerank | model={}, query={}, candidates={}, survived={}, cost={}ms, topScores={}",
-          model,
-          query,
-          candidates.size(),
-          reranked.size(),
-          cost,
-          summarizeScores(acceptedScores));
-
-      return reranked.isEmpty()
-          ? candidates.subList(0, Math.min(topN, candidates.size()))
-          : reranked;
-
-    } catch (Exception e) {
-      log.warn("Rerank 调用失败，降级返回原始排序 | err={}", e.getMessage());
-      return candidates.subList(0, Math.min(topN, candidates.size()));
     }
+    log.warn("Rerank 调用失败（已重试 {} 次），降级返回原始排序 | err={}", maxRetries, lastException.getMessage());
+    return candidates.subList(0, Math.min(topN, candidates.size()));
   }
 
   private String truncateDoc(String text) {

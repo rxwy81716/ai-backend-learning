@@ -2,6 +2,7 @@ package com.jianbo.localaiknowledge.mapper;
 
 import com.jianbo.localaiknowledge.model.SysRole;
 import com.jianbo.localaiknowledge.model.SysUser;
+import com.jianbo.localaiknowledge.model.SysUserWithRoles;
 import org.apache.ibatis.annotations.*;
 
 import java.util.List;
@@ -60,27 +61,35 @@ public interface SysUserMapper {
   List<SysUser> findAll();
 
   /**
-   * 查询所有用户（带角色信息）
+   * 查询所有用户（带角色信息）- 使用 JOIN 避免 N+1 查询
    *
-   * <p>注意：当 @Results 中显式声明了 @Result（如 roles 子查询），MyBatis 默认不会再自动映射其他字段，
-   * 必须把主键和需要的列都列出来；否则前端会拿到没有 id 的对象（导致 update/delete 时 path 变量为 null）。
+   * <p>通过 LEFT JOIN 一次性获取用户及关联角色，返回结果按用户分组后需要在 Service 层手动组装角色列表。
+   * 每行对应一个用户-角色关系，同一用户的多角色会产生多行记录。
    */
-  @Select("SELECT * FROM sys_user ORDER BY created_at DESC")
-  @Results(
-      id = "userWithRolesMap",
-      value = {
-        @Result(property = "id", column = "id", id = true),
-        @Result(property = "username", column = "username"),
-        @Result(property = "nickname", column = "nickname"),
-        @Result(property = "email", column = "email"),
-        @Result(property = "phone", column = "phone"),
-        @Result(property = "avatar", column = "avatar"),
-        @Result(property = "enabled", column = "enabled"),
-        @Result(property = "createdAt", column = "created_at"),
-        @Result(property = "updatedAt", column = "updated_at"),
-        @Result(property = "roles", column = "id", many = @Many(select = "findRolesByUserId"))
-      })
-  List<SysUser> findAllWithRoles();
+  @Select("""
+      SELECT u.id, u.username, u.nickname, u.email, u.phone, u.avatar, u.enabled,
+             u.created_at, u.updated_at,
+             r.id as role_id, r.code as role_code, r.name as role_name
+      FROM sys_user u
+      LEFT JOIN sys_user_role ur ON u.id = ur.user_id
+      LEFT JOIN sys_role r ON ur.role_id = r.id
+      ORDER BY u.id, r.id
+      """)
+  @Results({
+    @Result(property = "id", column = "id", id = true),
+    @Result(property = "username", column = "username"),
+    @Result(property = "nickname", column = "nickname"),
+    @Result(property = "email", column = "email"),
+    @Result(property = "phone", column = "phone"),
+    @Result(property = "avatar", column = "avatar"),
+    @Result(property = "enabled", column = "enabled"),
+    @Result(property = "createdAt", column = "created_at"),
+    @Result(property = "updatedAt", column = "updated_at"),
+    @Result(property = "roleId", column = "role_id"),
+    @Result(property = "roleCode", column = "role_code"),
+    @Result(property = "roleName", column = "role_name")
+  })
+  List<SysUserWithRoles> findAllWithRoles();
 
   /** 统计某角色的用户数量 */
   @Select("SELECT COUNT(*) FROM sys_user_role WHERE role_id = #{roleId}")

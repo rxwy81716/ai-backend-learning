@@ -1,6 +1,5 @@
 package com.jianbo.localaiknowledge.service;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -8,6 +7,8 @@ import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 
@@ -21,7 +22,6 @@ import java.util.Map;
  */
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class WebSearchService {
 
   @Value("${app.web-search.api-key:}")
@@ -33,16 +33,21 @@ public class WebSearchService {
   @Value("${app.web-search.enabled:false}")
   private boolean enabled;
 
+  @Value("${app.web-search.timeout-ms:10000}")
+  private long timeoutMs;
+
   private static final String TAVILY_URL = "https://api.tavily.com/search";
 
-  /**
-   * 同步 RestClient：底层走 JDK HttpClient，避开 Reactor Netty。
-   *
-   * <p>原因：本服务可能被 Spring AI Tool Calling 在流式 chat 的 Reactor 线程里调用，原先的
-   * {@code WebClient + .block()} 会触发 BlockHound 检测异常。换成 JDK HttpClient 后是普通阻塞 IO，无线程亲和限制。
-   */
-  private static final RestClient REST_CLIENT =
-      RestClient.builder().requestFactory(new JdkClientHttpRequestFactory()).build();
+  private final RestClient restClient;
+
+  public WebSearchService(@Value("${app.web-search.timeout-ms:10000}") long timeoutMs) {
+    JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
+        HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build());
+    requestFactory.setReadTimeout(Duration.ofMillis(timeoutMs));
+    this.restClient = RestClient.builder().requestFactory(requestFactory).build();
+  }
 
   /**
    * 执行网络搜索
@@ -70,7 +75,7 @@ public class WebSearchService {
 
       @SuppressWarnings("unchecked")
       Map<String, Object> response =
-          REST_CLIENT
+          restClient
               .post()
               .uri(TAVILY_URL)
               .contentType(MediaType.APPLICATION_JSON)

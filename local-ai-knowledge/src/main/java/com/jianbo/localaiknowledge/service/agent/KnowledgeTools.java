@@ -49,6 +49,7 @@ public class KnowledgeTools {
 
     List<Document> docs = hybridSearchService.searchWithOwnership(searchQuery, userId, DEFAULT_KB_TOP_K);
     ctx.addDocs(docs);
+    ctx.recordFirstRetrieval(docs);
 
     long cost = System.currentTimeMillis() - t0;
     log.info(

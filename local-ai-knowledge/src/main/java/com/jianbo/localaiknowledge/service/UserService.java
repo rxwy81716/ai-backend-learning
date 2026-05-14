@@ -3,9 +3,12 @@ package com.jianbo.localaiknowledge.service;
 import com.jianbo.localaiknowledge.mapper.SysUserMapper;
 import com.jianbo.localaiknowledge.model.SysRole;
 import com.jianbo.localaiknowledge.model.SysUser;
+import com.jianbo.localaiknowledge.model.SysUserWithRoles;
 import com.jianbo.localaiknowledge.utils.JwtUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -13,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 /** 用户服务（注册 / 登录 / 角色管理） */
 @Service
@@ -23,6 +27,82 @@ public class UserService {
   private final SysUserMapper userMapper;
   private final PasswordEncoder passwordEncoder;
   private final JwtUtil jwtUtil;
+  private final StringRedisTemplate redisTemplate;
+
+  /** Redis Key 前缀 */
+  private static final String FAILED_KEY_PREFIX = "account:failed:";
+  private static final String LOCK_KEY_PREFIX = "account:lock:";
+
+  /** 登录失败限制配置 */
+  @Value("${app.security.max-failed-attempts:5}")
+  private int maxFailedAttempts;
+
+  @Value("${app.security.lock-duration-minutes:30}")
+  private int lockDurationMinutes;
+
+  /**
+   * 检查账户是否被锁定
+   */
+  private boolean isAccountLocked(String username) {
+    String lockKey = LOCK_KEY_PREFIX + username;
+    String lockValue = redisTemplate.opsForValue().get(lockKey);
+    if (lockValue == null) {
+      return false;
+    }
+    long lockUntilMs = Long.parseLong(lockValue);
+    if (System.currentTimeMillis() > lockUntilMs) {
+      // 锁定已过期，清理
+      redisTemplate.delete(lockKey);
+      redisTemplate.delete(FAILED_KEY_PREFIX + username);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * 获取锁定剩余时间（分钟）
+   */
+  private long getLockRemainingMinutes(String username) {
+    String lockKey = LOCK_KEY_PREFIX + username;
+    String lockValue = redisTemplate.opsForValue().get(lockKey);
+    if (lockValue == null) {
+      return 0;
+    }
+    long lockUntilMs = Long.parseLong(lockValue);
+    return Math.max(1, (lockUntilMs - System.currentTimeMillis()) / 60000 + 1);
+  }
+
+  /**
+   * 记录登录失败
+   */
+  private void recordFailedAttempt(String username) {
+    String failedKey = FAILED_KEY_PREFIX + username;
+    Long count = redisTemplate.opsForValue().increment(failedKey);
+    if (count == null) {
+      count = 1L;
+    }
+    // 设置过期时间（防止数据残留）
+    redisTemplate.expire(failedKey, lockDurationMinutes * 2L, TimeUnit.MINUTES);
+
+    if (count >= maxFailedAttempts) {
+      long lockUntilMs = System.currentTimeMillis() + lockDurationMinutes * 60 * 1000L;
+      String lockKey = LOCK_KEY_PREFIX + username;
+      redisTemplate.opsForValue().set(lockKey, String.valueOf(lockUntilMs));
+      redisTemplate.delete(failedKey); // 锁定后清除失败次数
+      log.warn("账户已被锁定 | username={}, failedAttempts={}, lockUntil={}min后",
+          username, count, lockDurationMinutes);
+    } else {
+      log.debug("登录失败 | username={}, failedAttempts={}/{}", username, count, maxFailedAttempts);
+    }
+  }
+
+  /**
+   * 清除登录失败记录（登录成功时调用）
+   */
+  private void clearFailedAttempts(String username) {
+    redisTemplate.delete(FAILED_KEY_PREFIX + username);
+    redisTemplate.delete(LOCK_KEY_PREFIX + username);
+  }
 
   /**
    * 用户注册
@@ -60,11 +140,17 @@ public class UserService {
   }
 
   /**
-   * 用户登录
+   * 用户登录（带登录失败限制）
    *
    * @return token + 用户信息
    */
   public Map<String, Object> login(String username, String password) {
+    // 0. 检查账户是否被锁定
+    if (isAccountLocked(username)) {
+      long remainingMinutes = getLockRemainingMinutes(username);
+      throw new IllegalArgumentException("账户已锁定，请" + remainingMinutes + "分钟后重试");
+    }
+
     // 1. 查找用户
     SysUser user = userMapper.findByUsername(username);
     if (user == null) {
@@ -73,6 +159,7 @@ public class UserService {
 
     // 2. 校验密码
     if (!passwordEncoder.matches(password, user.getPassword())) {
+      recordFailedAttempt(username);
       throw new IllegalArgumentException("用户名或密码错误");
     }
 
@@ -81,11 +168,14 @@ public class UserService {
       throw new IllegalArgumentException("账号已被禁用，请联系管理员");
     }
 
-    // 4. 查询角色
+    // 4. 登录成功，清除失败记录
+    clearFailedAttempts(username);
+
+    // 5. 查询角色
     List<SysRole> roles = userMapper.findRolesByUserId(user.getId());
     List<String> roleCodes = roles.stream().map(SysRole::getCode).toList();
 
-    // 5. 生成 Token
+    // 6. 生成 Token
     String token = jwtUtil.generateToken(user.getId(), username, roleCodes);
 
     log.info("用户登录成功 | username={}, roles={}", username, roleCodes);
@@ -128,22 +218,31 @@ public class UserService {
     log.info("分配角色 | userId={}, role={}", userId, roleCode);
   }
 
-  /** 管理员：查看所有用户 */
+  /** 管理员：查看所有用户 - 使用 JOIN 避免 N+1 查询 */
   public List<Map<String, Object>> listAllUsers() {
-    return userMapper.findAll().stream()
-        .map(
-            u -> {
-              List<SysRole> roles = userMapper.findRolesByUserId(u.getId());
-              Map<String, Object> map = new LinkedHashMap<>();
-              map.put("id", u.getId());
-              map.put("username", u.getUsername());
-              map.put("nickname", u.getNickname());
-              map.put("enabled", u.getEnabled());
-              map.put("roles", roles.stream().map(SysRole::getCode).toList());
-              map.put("createdAt", u.getCreatedAt());
-              return map;
-            })
-        .toList();
+    // JOIN 查询一次性获取所有用户及角色信息，按用户分组后组装
+    Map<Long, Map<String, Object>> userMap = new LinkedHashMap<>();
+    for (SysUserWithRoles row : userMapper.findAllWithRoles()) {
+      Long userId = row.getId();
+      // 新用户首次出现，初始化
+      if (!userMap.containsKey(userId)) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("id", row.getId());
+        map.put("username", row.getUsername());
+        map.put("nickname", row.getNickname());
+        map.put("enabled", row.getEnabled());
+        map.put("roles", new java.util.ArrayList<String>());
+        map.put("createdAt", row.getCreatedAt());
+        userMap.put(userId, map);
+      }
+      // 角色非空时添加（LEFT JOIN 可能有空角色）
+      if (row.getRoleId() != null) {
+        @SuppressWarnings("unchecked")
+        java.util.List<String> roles = (java.util.List<String>) userMap.get(userId).get("roles");
+        roles.add(row.getRoleCode());
+      }
+    }
+    return new java.util.ArrayList<>(userMap.values());
   }
 
   /** 管理员：启用/禁用用户 */

@@ -18,6 +18,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
@@ -179,7 +180,8 @@ public class DocumentParseService {
     submitToQueue(taskId);
   }
 
-  /** 删除文档任务（DB记录 + 本地文件 + ES向量 + PG数据） */
+  /** 删除文档任务（DB记录 + 本地文件 + ES向量 + PG数据）- 使用事务保证原子性 */
+  @Transactional(rollbackFor = Exception.class)
   public void deleteTask(String taskId) {
     DocumentTask task = taskMapper.selectByTaskId(taskId);
     if (task == null) {

@@ -9,6 +9,9 @@ import com.jianbo.localaiknowledge.model.SysRole;
 import com.jianbo.localaiknowledge.model.SysUser;
 import com.jianbo.localaiknowledge.model.SystemPrompt;
 import com.jianbo.localaiknowledge.service.MenuService;
+import com.jianbo.localaiknowledge.service.RoleService;
+import com.jianbo.localaiknowledge.service.UserService;
+import com.jianbo.localaiknowledge.utils.AccountValidator;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,13 +33,15 @@ public class AdminController {
   private final SysMenuMapper menuMapper;
   private final SystemPromptMapper systemPromptMapper;
   private final MenuService menuService;
+  private final RoleService roleService;
+  private final UserService userService;
   private final PasswordEncoder passwordEncoder;
 
   // ==================== 用户管理 ====================
 
   @GetMapping("/users")
-  public List<SysUser> getUsers() {
-    return userMapper.findAllWithRoles();
+  public List<Map<String, Object>> getUsers() {
+    return userService.listAllUsers();
   }
 
   @PutMapping("/users/{id}/enabled")
@@ -63,12 +68,9 @@ public class AdminController {
   /** 创建用户 */
   @PostMapping("/users")
   public SysUser createUser(@RequestBody SysUser user) {
-    if (user.getUsername() == null || user.getUsername().isBlank()) {
-      throw new IllegalArgumentException("用户名不能为空");
-    }
-    if (user.getPassword() == null || user.getPassword().isBlank()) {
-      throw new IllegalArgumentException("密码不能为空");
-    }
+    // 密码校验
+    AccountValidator.validateUsername(user.getUsername());
+    AccountValidator.validatePassword(user.getPassword(), user.getUsername());
     if (userMapper.findByUsername(user.getUsername()) != null) {
       throw new IllegalArgumentException("用户名已存在");
     }
@@ -119,61 +121,22 @@ public class AdminController {
 
   @GetMapping("/roles")
   public List<SysRole> getRoles() {
-    List<SysRole> roles = roleMapper.findAll();
-    if (!roles.isEmpty()) {
-      List<Long> roleIds = roles.stream().map(SysRole::getId).toList();
-      Map<Long, Integer> countMap = userMapper.countByRoleIds(roleIds);
-      for (SysRole role : roles) {
-        role.setUserCount(countMap.getOrDefault(role.getId(), 0));
-      }
-    }
-    return roles;
+    return roleService.findAllWithUserCount();
   }
 
   @PostMapping("/roles")
   public SysRole createRole(@RequestBody SysRole role) {
-    if (role.getName() == null || role.getName().isBlank()) {
-      throw new IllegalArgumentException("角色名称不能为空");
-    }
-    if (role.getCode() == null || role.getCode().isBlank()) {
-      throw new IllegalArgumentException("角色编码不能为空");
-    }
-    if (userMapper.findRoleByCode(role.getCode()) != null) {
-      throw new IllegalArgumentException("角色编码已存在");
-    }
-    roleMapper.insert(role);
-    log.info("创建角色 | name={}, code={}", role.getName(), role.getCode());
-    return role;
+    return roleService.create(role);
   }
 
   @PutMapping("/roles/{id}")
   public void updateRole(@PathVariable Long id, @RequestBody SysRole role) {
-    SysRole existing = roleMapper.findById(id);
-    if (existing == null) {
-      throw new IllegalArgumentException("角色不存在");
-    }
-    if ("ROLE_ADMIN".equals(existing.getCode()) || "ROLE_USER".equals(existing.getCode())) {
-      throw new IllegalArgumentException("系统角色不允许修改");
-    }
-    role.setId(id);
-    roleMapper.update(role);
-    log.info("更新角色 | id={}", id);
+    roleService.update(id, role);
   }
 
   @DeleteMapping("/roles/{id}")
   public void deleteRole(@PathVariable Long id) {
-    SysRole role = roleMapper.findById(id);
-    if (role == null) {
-      throw new IllegalArgumentException("角色不存在");
-    }
-    if ("ROLE_ADMIN".equals(role.getCode()) || "ROLE_USER".equals(role.getCode())) {
-      throw new IllegalArgumentException("系统角色不允许删除");
-    }
-    if (userMapper.countByRoleId(id) > 0) {
-      throw new IllegalArgumentException("该角色下有用户，不允许删除");
-    }
-    roleMapper.deleteById(id);
-    log.info("删除角色 | id={}", id);
+    roleService.delete(id);
   }
 
   // ==================== 菜单管理 ====================

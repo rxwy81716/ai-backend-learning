@@ -73,9 +73,11 @@ public class SecurityConfig {
                     // 注册登录公开
                     .requestMatchers("/auth/login", "/auth/register")
                     .permitAll()
-                    // Round 4：actuator 监控端点公开（生产环境应加 IP 白名单 or 独立认证）
-                    .requestMatchers("/actuator/**")
+                    // Round 4：actuator 监控端点，仅 /health 公开，其他需要 ADMIN 角色
+                    .requestMatchers("/actuator/health", "/actuator/health/**")
                     .permitAll()
+                    .requestMatchers("/actuator/**")
+                    .hasAuthority("ROLE_ADMIN")
                     // /auth/me 和 /auth/refresh 需要认证
                     .requestMatchers("/auth/me", "/auth/refresh")
                     .authenticated()

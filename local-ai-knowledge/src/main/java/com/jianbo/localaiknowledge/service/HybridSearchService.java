@@ -18,6 +18,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -298,7 +299,7 @@ public class HybridSearchService {
     return results;
   }
 
-  /** RRF 融合多路召回结果 */
+  /** RRF 融合多路召回结果 - 使用堆排序优化 O(n log k) */
   private List<Document> rrfFuse(List<Document> vectorHits, List<Document> keywordHits, int topK) {
     // docId -> 累计 RRF 分数
     Map<String, Double> rrfScores = new HashMap<>();
@@ -311,18 +312,30 @@ public class HybridSearchService {
     accumulate(vectorHits, rrfScores, docMap, vectorRank);
     accumulate(keywordHits, rrfScores, docMap, bm25Rank);
 
-    // 按 RRF 分数倒序排
-    List<Map.Entry<String, Double>> sorted = new ArrayList<>(rrfScores.entrySet());
-    sorted.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+    // 使用堆排序 O(n log k) 替代全量排序 O(n log n)
+    PriorityQueue<Map.Entry<String, Double>> pq = new PriorityQueue<>(
+        (a, b) -> Double.compare(a.getValue(), b.getValue()));
 
-    List<Document> result = new ArrayList<>(Math.min(topK, sorted.size()));
-    for (int i = 0; i < Math.min(topK, sorted.size()); i++) {
-      String id = sorted.get(i).getKey();
+    for (Map.Entry<String, Double> entry : rrfScores.entrySet()) {
+      if (pq.size() < topK) {
+        pq.offer(entry);
+      } else if (entry.getValue() > pq.peek().getValue()) {
+        pq.poll();
+        pq.offer(entry);
+      }
+    }
+
+    // 逆序输出（从高到低）
+    List<Document> result = new ArrayList<>(pq.size());
+    List<Map.Entry<String, Double>> sorted = new ArrayList<>(pq);
+    sorted.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
+    for (Map.Entry<String, Double> entry : sorted) {
+      String id = entry.getKey();
       Document origin = docMap.get(id);
 
       // 写入融合元数据，便于调试 / 引用展示
       Map<String, Object> meta = new HashMap<>(origin.getMetadata());
-      meta.put("hybrid_score", sorted.get(i).getValue());
+      meta.put("hybrid_score", entry.getValue());
       if (vectorRank.containsKey(id)) meta.put("vector_rank", vectorRank.get(id));
       if (bm25Rank.containsKey(id)) meta.put("bm25_rank", bm25Rank.get(id));
 
