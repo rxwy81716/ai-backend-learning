@@ -89,6 +89,8 @@ export interface ChatRequest {
   chatMode?: ChatMode
   /** 思考模式开关：true=深度推理（慢，回答更好） / false 或省略=快速模式（默认） */
   thinking?: boolean
+  /** 与后端 ChatModelRegistry / 用户自备 user:{alias} 对齐 */
+  model?: string
 }
 
 export interface ChatResponse {

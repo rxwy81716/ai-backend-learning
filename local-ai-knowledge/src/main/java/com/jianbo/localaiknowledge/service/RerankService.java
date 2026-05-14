@@ -24,8 +24,8 @@ import java.util.Map;
  * <p>痛点：向量检索 + BM25 + RRF 融合后的 top-K 仍可能包含"语义相近但实际无关"的噪声文档，
  * 导致 LLM 被无关上下文干扰而产生幻觉。
  *
- * <p>方案：调用 Cross-Encoder Reranker（BAAI/bge-reranker-v2-m3）对候选文档做细粒度打分，
- * 只保留真正相关的 top-N，显著提升 Precision@K。
+ * <p>方案：调用远程 Rerank API（默认智谱 {@code rerank}，与 SiliconFlow 等 OpenAI 兼容形态一致）
+ * 对候选文档打分，只保留真正相关的 top-N，提升 Precision@K。
  *
  * <p>架构位置：{@code HybridSearchService} RRF 融合后 → Rerank → 返回最终 top-K
  *
@@ -33,7 +33,8 @@ import java.util.Map;
  *   vector(30) + BM25(30) → RRF(rerank-top-n) → Rerank(final top-K)
  * </pre>
  *
- * <p>调用 SiliconFlow Rerank API（OpenAI 兼容），延迟 ~200ms，对 20 篇候选文档。
+ * <p>请求体：{@code model, query, documents, top_n, return_documents}；响应 {@code results[].index,
+ * relevance_score}。具体服务商由 {@code app.rag.rerank.api-url} 决定。
  */
 @Slf4j
 @Service
@@ -44,7 +45,7 @@ public class RerankService {
   @Value("${app.rag.rerank.enabled:false}")
   private boolean enabled;
 
-  @Value("${app.rag.rerank.model:BAAI/bge-reranker-v2-m3}")
+  @Value("${app.rag.rerank.model:rerank}")
   private String model;
 
   @Value("${app.rag.rerank.top-n:5}")
@@ -53,10 +54,10 @@ public class RerankService {
   @Value("${app.rag.rerank.score-threshold:0.1}")
   private double scoreThreshold;
 
-  @Value("${app.rag.rerank.api-url:https://api.siliconflow.cn/v1/rerank}")
+  @Value("${app.rag.rerank.api-url:https://open.bigmodel.cn/api/paas/v4/rerank}")
   private String apiUrl;
 
-  @Value("${app.embedding.siliconflow.api-key:${SILICONFLOW_API_KEY:}}")
+  @Value("${app.rag.rerank.api-key:}")
   private String apiKey;
 
   @Value("${app.rag.rerank.timeout-ms:2000}")

@@ -13,6 +13,7 @@ import com.jianbo.localaiknowledge.service.EsKeywordSearchService;
 import com.jianbo.localaiknowledge.service.agent.ChatModelRegistry;
 import com.jianbo.localaiknowledge.service.agent.MultiAgentOrchestrator;
 import com.jianbo.localaiknowledge.service.SystemPromptService;
+import com.jianbo.localaiknowledge.service.UserChatModelService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +23,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -51,6 +53,7 @@ public class RagController {
   private final DocumentTaskMapper documentTaskMapper;
   private final EsKeywordSearchService keywordSearchService;
   private final ChatModelRegistry chatModelRegistry;
+  private final UserChatModelService userChatModelService;
 
   private static final String SESSION_TITLE_KEY = "chat:session:titles";
 
@@ -78,16 +81,26 @@ public class RagController {
     String promptName = body.get("promptName");
     String chatMode = normalizeChatMode(body.get("chatMode"));
     boolean thinking = parseThinking(body);
-    String model = body.get("model"); // 可选：运行时切换 ChatModel（与 ChatModelRegistry 对齐）
+    String model = body.get("model"); // 可选：系统 glm/deepseek/default，或用户自备 user:{alias}（见 ChatClientResolver）
 
     return multiAgentOrchestrator.chatStream(
         sessionId, question, userId, promptName, chatMode, thinking, model);
   }
 
-  /** 列出注册表中所有可用的 ChatModel key（供前端下拉选择模型） */
+  /**
+   * 列出可用的 ChatModel key：系统注册表 + 当前登录用户自备配置（{@code user:{alias}}）。
+   *
+   * <p>未登录时仅返回系统 keys。
+   */
   @GetMapping("/models")
   public Map<String, Object> listModels() {
-    return Map.of("models", chatModelRegistry.availableKeys());
+    LinkedHashSet<String> keys = new LinkedHashSet<>(chatModelRegistry.availableKeys());
+    Long uid = SecurityUtil.getCurrentUserId();
+    if (uid != null) {
+      // 已登录：把该用户在 user_chat_model_config 中的条目合并进下拉（user:alias）
+      keys.addAll(userChatModelService.listPrefixedModelKeys(uid));
+    }
+    return Map.of("models", keys);
   }
 
   /** 用户输入最大长度（字符数）：超过即拒绝，避免单次 prompt 撑爆 token / 上下文窗口。 */

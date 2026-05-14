@@ -3,6 +3,11 @@ import type { ChatRequest, SystemPrompt, ChatMessage, Session } from '@/types'
 
 // ==================== 智能问答（自动路由 知识库 → 网络搜索 → LLM直答） ====================
 
+/** 拉取可选对话模型 key：系统（glm/deepseek/…）+ 当前用户已配置的 user:alias（需登录才有后者）。 */
+export function listRagModels() {
+  return request.get<any, { models: string[] }>('/api/rag/models')
+}
+
 // 智能问答（SSE 流式）—— 后端唯一对外入口
 export function chatStream(data: ChatRequest) {
   return request.post<any, any>('/api/rag/chat/stream', data)

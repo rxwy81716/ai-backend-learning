@@ -2,7 +2,6 @@ package com.jianbo.localaiknowledge.service.agent;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
@@ -16,7 +15,7 @@ import reactor.core.publisher.Flux;
 @RequiredArgsConstructor
 public class ChatAgent implements SpecializedAgent {
 
-  private final ChatClient chatClient;
+  private final ChatClientResolver chatClientResolver;
 
   private static final String SYSTEM_PROMPT = """
       你是一个智能问答助手。请基于你自身的知识尽可能准确地回答用户问题。
@@ -43,8 +42,11 @@ public class ChatAgent implements SpecializedAgent {
 
   @Override
   public Flux<String> execute(AgentRequest request) {
-    // 无工具，直接流式调用
-    return chatClient.prompt()
+    RagToolContext ctx = request.toolCtx();
+    // 与 KnowledgeAgent 一致：尊重 SSE 请求体中的 model（含 user:alias）
+    return chatClientResolver
+        .resolve(ctx.getUserId(), ctx.getModelKey())
+        .prompt()
         .messages(request.messages())
         .stream()
         .content();

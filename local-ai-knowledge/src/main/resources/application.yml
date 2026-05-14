@@ -8,8 +8,8 @@ spring:
     name: local-ai-knowledge
   ai:
     # 引入 spring-ai-starter-model-openai 后，它的 audio/image/moderation 子自动配置会强制要求
-    # spring.ai.openai.api-key，没设就启动失败。本项目只用 OpenAI 兼容协议跑 embedding（硅基流动），
-    # 其余 OpenAI 子模块全部关掉。chat / embedding 走各 profile 显式配置。
+    # spring.ai.openai.api-key，没设就启动失败。Embedding 由 EmbeddingModelConfig 单独走智谱 /v4/embeddings；
+    # 其余 OpenAI 子模块全部关掉。chat 走各 profile 的 spring.ai.openai。
     model:
       image: none
       moderation: none
@@ -112,25 +112,34 @@ app:
       max-query-length: 100           # 改写结果最大长度，超出视为异常回退
     rerank:
       enabled: true                   # 启用Rerank过滤假阳性BM25匹配
-      model: BAAI/bge-reranker-v2-m3
+      # 智谱文本重排序：https://open.bigmodel.cn/api/paas/v4/rerank（与 SiliconFlow /v1/rerank 请求体兼容）
+      model: rerank
       candidates: 20                  # RRF 先取前 20 篇候选，再交给 Cross-Encoder 精排
       top-n: 5                        # 最终保留前 5 篇给 LLM 作为上下文
       score-threshold: 0.7            # 低于该分数视为弱相关，直接丢弃
       timeout-ms: 2000                # Rerank 超时即降级，不阻断主检索链
       max-doc-chars: 2000             # 单文档送 rerank 的最大字符数，控制成本与延迟
-      api-url: https://api.siliconflow.cn/v1/rerank
-  # Embedding 始终走硅基流动 bge-m3（1024 维，OpenAI 兼容协议）
+      api-url: https://open.bigmodel.cn/api/paas/v4/rerank
+      api-key: ${ZHIPU_API_KEY:1a17824aecef4bae8487e3d724173de9.om8jBxc8WbuKdU4V}
+  # Embedding：智谱 embedding-3（dimensions 须与 spring.ai.vectorstore.*.dimensions 一致）
   embedding:
-    siliconflow:
-      base-url: https://api.siliconflow.cn
-      api-key: ${SILICONFLOW_API_KEY:sk-ujhxtozyxlazxylbthdtfcgbqgsezzkjcufglnvzzwwruktv}
-      model: BAAI/bge-m3
-  # ==================== 多 ChatModel 注册表 ====================
+    zhipu:
+      base-url: https://open.bigmodel.cn/api/paas
+      api-key: ${ZHIPU_API_KEY:1a17824aecef4bae8487e3d724173de9.om8jBxc8WbuKdU4V}
+      model: embedding-3
+      embeddings-path: /v4/embeddings
+      dimensions: 1024
+  # ---------------------------------------------------------------------------
+  # 用户自备 Chat：入库 API Key 的 AES 加密密钥；留空则由 app.jwt.secret 派生（生产建议显式配置）
+  # 说明文档：仓库根 docs/用户自备对话模型配置说明.md
+  # ---------------------------------------------------------------------------
+  user-chat-model:
+    encryption-secret: ${USER_CHAT_MODEL_ENC_SECRET:}
   # 运行时根据请求体 body.model 选择模型（与 profile 启动参数独立）。
   # 前端可调用 GET /api/rag/models 获取可用 key 列表。
   # provider 的 api-key 留空会被跳过，仅保留能跑通的模型。
   chat-models:
-    default-key: glm
+    default-key: deepseek
     providers:
       glm:
         base-url: https://open.bigmodel.cn/api/paas
@@ -142,7 +151,7 @@ app:
       deepseek:
         base-url: https://api.deepseek.com
         api-key: ${DEEPSEEK_API_KEY:sk-e40f5abad8894678b9f5746fb292adad}
-        model: deepseek-chat
+        model: deepseek-v4-flash
         temperature: 0.3
         max-tokens: 2048
 mybatis:

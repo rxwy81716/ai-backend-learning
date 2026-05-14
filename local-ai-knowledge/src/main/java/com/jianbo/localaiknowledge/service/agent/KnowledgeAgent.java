@@ -2,7 +2,6 @@ package com.jianbo.localaiknowledge.service.agent;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.stereotype.Component;
@@ -22,7 +21,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class KnowledgeAgent implements SpecializedAgent {
 
-  private final ChatClient chatClient;
+  private final ChatClientResolver chatClientResolver;
   private final KnowledgeTools knowledgeTools;
   private final com.jianbo.localaiknowledge.service.HybridSearchService hybridSearchService;
 
@@ -110,7 +109,10 @@ public class KnowledgeAgent implements SpecializedAgent {
     augmentedMessages.add(augmentedMessages.size() - 1,
         new SystemMessage("【知识库检索结果】\n" + kbResult + "\n请基于以上检索结果回答用户问题。如果检索结果包含多个文档片段，请综合整理后回答。"));
 
-    return chatClient.prompt()
+    // 按 RagToolContext 中的 modelKey 解析：系统 key 走注册表，user:alias 走库表 + 本地缓存（ChatClientResolver）
+    return chatClientResolver
+        .resolve(ctx.getUserId(), ctx.getModelKey())
+        .prompt()
         .messages(augmentedMessages)
         .stream()
         .content();

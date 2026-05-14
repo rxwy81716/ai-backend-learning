@@ -32,8 +32,7 @@ public class EmbeddingService {
     //    参数2: EmbeddingOptions 选项（null = 用yaml默认配置）
     EmbeddingRequest request = new EmbeddingRequest(List.of(text), null);
 
-    // 2. 调用 Embedding 模型 API
-    //    底层会发HTTP请求到 SiliconFlow 服务器
+    // 2. 调用 Embedding 模型 API（由 EmbeddingModelConfig 指向的远程服务）
     //    服务器返回：文本对应的向量数组
     EmbeddingResponse response = embeddingModel.call(request);
 

@@ -46,8 +46,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class PlannerAgent implements SpecializedAgent {
 
-  private final ChatClient chatClient;
-  private final ChatModelRegistry chatModelRegistry;
+  private final ChatClientResolver chatClientResolver;
   private final KnowledgeTools knowledgeTools;
   private final ObjectMapper objectMapper;
   /** Round 4：Planner 新增 web_search / get_hot_list action 所需依赖 */
@@ -107,9 +106,8 @@ public class PlannerAgent implements SpecializedAgent {
 
   private void runReactLoop(AgentRequest request, reactor.core.publisher.FluxSink<String> sink) {
     RagToolContext ctx = request.toolCtx();
-    ChatClient llm = chatModelRegistry != null && ctx.getModelKey() != null
-        ? chatModelRegistry.getClient(ctx.getModelKey())
-        : chatClient;
+    // Think / Finalize 共用同一 ChatClient，含用户自备 user:alias 与 YAML 多模型
+    ChatClient llm = chatClientResolver.resolve(ctx.getUserId(), ctx.getModelKey());
 
     // 构造独立的规划消息列表：替换原 system prompt 为 ReAct 专用 prompt
     List<Message> baseMsgs = new ArrayList<>(request.messages());

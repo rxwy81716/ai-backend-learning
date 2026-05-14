@@ -235,6 +235,23 @@
                 LLM 直答
               </el-radio-button>
             </el-radio-group>
+            <!-- 与 GET /api/rag/models 对齐：含系统 key + 已登录用户的 user:alias；选中值写入 SSE body.model -->
+            <el-select
+              v-model="selectedChatModel"
+              placeholder="对话模型"
+              clearable
+              filterable
+              size="small"
+              class="model-select"
+            >
+              <el-option label="默认（服务器）" value="" />
+              <el-option
+                v-for="k in ragModelKeys"
+                :key="k"
+                :label="ragModelOptionLabel(k)"
+                :value="k"
+              />
+            </el-select>
             <el-tooltip
               v-if="chatMode === 'LLM'"
               content="LLM直答模式不经过知识库，回答基于AI通用知识，仅供参考"
@@ -304,7 +321,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getSessions, getHistory, deleteSession as deleteSessionApi, renameSession as renameSessionApi, submitFeedback } from '@/api/rag'
+import { getSessions, getHistory, deleteSession as deleteSessionApi, renameSession as renameSessionApi, submitFeedback, listRagModels } from '@/api/rag'
 import type { Session, ChatMode } from '@/types'
 import { requestStream } from '@/utils/request'
 
@@ -391,6 +408,56 @@ const exampleQuestions = [
 const askExample = (q: string) => {
   question.value = q
   handleSend()
+}
+
+const RAG_MODEL_STORAGE_KEY = 'ragChatSelectedModel'
+// 模型列表来自后端；选中项持久化到 localStorage，刷新后仍用于 /api/rag/chat/stream 的 body.model
+const ragModelKeys = ref<string[]>([])
+const storedModel = localStorage.getItem(RAG_MODEL_STORAGE_KEY) || ''
+if (storedModel === 'default') {
+  localStorage.removeItem(RAG_MODEL_STORAGE_KEY)
+}
+// 后端 ChatModelRegistry 会把 default-key 注册为别名 key「default」，与「默认（服务器）」等价，不再展示/持久化该值
+const selectedChatModel = ref<string>(storedModel === 'default' ? '' : storedModel)
+
+watch(selectedChatModel, (v) => {
+  if (v) {
+    localStorage.setItem(RAG_MODEL_STORAGE_KEY, v)
+  } else {
+    localStorage.removeItem(RAG_MODEL_STORAGE_KEY)
+  }
+})
+
+/** 下拉展示用：系统模型中文名 + 用户自备别名 */
+function ragModelOptionLabel(key: string): string {
+  switch (key) {
+    case 'deepseek':
+      return 'DeepSeek'
+    case 'glm':
+      return '智谱 GLM'
+    default:
+      if (key.startsWith('user:')) {
+        return `自备 · ${key.slice(5)}`
+      }
+      return key
+  }
+}
+
+const loadRagModels = async () => {
+  try {
+    const data = await listRagModels()
+    const raw = data?.models ?? []
+    const keys = raw.filter((k) => k && k !== 'default')
+    ragModelKeys.value = keys
+    if (selectedChatModel.value === 'default') {
+      selectedChatModel.value = ''
+    }
+    if (selectedChatModel.value && !keys.includes(selectedChatModel.value)) {
+      selectedChatModel.value = ''
+    }
+  } catch (e) {
+    console.warn('加载模型列表失败', e)
+  }
 }
 
 // 移动端默认折叠历史面板
@@ -622,7 +689,8 @@ const runStream = async (q: string) => {
       question: q,
       sessionId: currentSessionId.value || undefined,
       chatMode: chatMode.value,
-      thinking: thinkingMode.value
+      thinking: thinkingMode.value,
+      ...(selectedChatModel.value ? { model: selectedChatModel.value } : {})
     },
     (text) => {
       // 1. 合并 SSE 帧到缓冲区，统一做 [STEP]/[META] 抽取
@@ -831,6 +899,7 @@ const scrollToBottom = () => {
 
 onMounted(() => {
   loadSessions(true)
+  loadRagModels()
 })
 </script>
 
@@ -1435,6 +1504,12 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.model-select {
+  min-width: 200px;
+  max-width: 280px;
 }
 
 .mode-tip {

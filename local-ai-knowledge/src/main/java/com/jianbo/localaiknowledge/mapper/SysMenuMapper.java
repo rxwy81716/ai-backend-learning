@@ -27,7 +27,7 @@ public interface SysMenuMapper {
   @Update(
       "UPDATE sys_menu SET parent_id=#{parentId}, name=#{name}, path=#{path}, "
           + "component=#{component}, icon=#{icon}, sort_order=#{sortOrder}, "
-          + "is_visible=#{isVisible}, is_enabled=#{isEnabled}, updated_at=CURRENT_TIMESTAMP "
+          + "is_visible=#{isVisible}, updated_at=CURRENT_TIMESTAMP "
           + "WHERE id=#{id}")
   int update(SysMenu menu);
 

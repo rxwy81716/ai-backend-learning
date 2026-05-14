@@ -93,25 +93,32 @@ export const useMenuStore = defineStore('menu', () => {
         order: 1
       },
       {
+        path: '/settings/chat-models',
+        name: 'UserChatModels',
+        title: '对话模型配置',
+        icon: 'Key',
+        order: 2 // 后端菜单拉取失败时的兜底侧栏；与 router 中 /settings/chat-models 一致
+      },
+      {
         path: '/skills',
         name: 'SkillMarket',
         title: 'Skill 能力市场',
         icon: 'MagicStick',
-        order: 2
+        order: 3
       },
       {
         path: '/finetune',
         name: 'FineTuneCompare',
         title: '微调对比',
         icon: 'DataAnalysis',
-        order: 3
+        order: 4
       },
       {
         path: '/mcp',
         name: 'McpStatus',
         title: 'MCP 协议',
         icon: 'Connection',
-        order: 4
+        order: 5
       }
     ]
   }

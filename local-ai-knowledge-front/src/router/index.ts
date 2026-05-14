@@ -40,6 +40,9 @@ const FineTuneCompare = () => import('@/views/finetune/FineTuneCompare.vue')
 // MCP 协议面板
 const McpStatus = () => import('@/views/mcp/McpStatus.vue')
 
+// 对话模型（用户自备 Key）— 配置页与 /rag 下拉数据来源见 listRagModels、UserChatModels.vue
+const UserChatModels = () => import('@/views/settings/UserChatModels.vue')
+
 // 错误页面
 const NotFound = () => import('@/views/error/404.vue')
 const Forbidden = () => import('@/views/error/403.vue')
@@ -90,6 +93,12 @@ const privateRoutes: RouteRecordRaw[] = [
         name: 'RagChat',
         component: RagChat,
         meta: { title: '智能问答', icon: 'ChatDotRound' }
+      },
+      {
+        path: 'settings/chat-models',
+        name: 'UserChatModels',
+        component: UserChatModels,
+        meta: { title: '对话模型配置', icon: 'Key' } // 与后端 /api/user/chat-models 对应
       },
       {
         path: 'documents',

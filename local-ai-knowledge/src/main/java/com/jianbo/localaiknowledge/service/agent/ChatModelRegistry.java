@@ -6,12 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.openai.OpenAiChatModel;
-import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
 import java.util.Collections;
 import java.util.Map;
@@ -31,8 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *       未知 key 时 fallback 到 {@code default-key} 指定的实例，再次未命中则回退 @Primary bean
  * </ul>
  *
- * <p>与 profile 切换的区别：profile 只在启动时生效、同一进程只能连一家厂商；注册表允许单进程同时持有
- * 多个 ChatModel 实例，前端请求可携带 {@code model=glm|deepseek|...} 即时切换，便于做 A/B、灰度、容灾兜底。
+ * <p>用户库表自备模型（{@code user:{alias}}）不在此注册，由 {@link ChatClientResolver} 在请求时解析。
+ *
+ * <p>与 profile 切换的区别：profile 只在启动时生效；注册表允许单进程同时持有多个 YAML 声明的 ChatModel，
+ * 前端请求可携带 {@code model=glm|deepseek|...} 即时切换。
  */
 @Component
 @Slf4j
@@ -42,6 +39,8 @@ public class ChatModelRegistry {
   public static final String DEFAULT_KEY = "default";
 
   private final ChatModelProperties properties;
+  /** YAML 注册与 {@link com.jianbo.localaiknowledge.service.UserChatModelService} 自备模型均经此工厂构建，避免重复。 */
+  private final OpenAiCompatibleChatModelFactory openAiChatModelFactory;
   /** Spring AI 自动配置的 @Primary ChatModel（来自当前激活 profile） */
   private final ChatModel primaryChatModel;
 
@@ -75,7 +74,7 @@ public class ChatModelRegistry {
         continue;
       }
       try {
-        ChatModel m = buildOpenAiChatModel(p);
+        ChatModel m = openAiChatModelFactory.createFromProvider(p);
         modelMap.put(key, m);
         clientMap.put(key, ChatClient.create(m));
         log.info("✅ [ChatModelRegistry] 注册模型: {} → {} @ {}", key, p.getModel(), p.getBaseUrl());
@@ -125,31 +124,5 @@ public class ChatModelRegistry {
    */
   public Set<String> availableKeys() {
     return Collections.unmodifiableSet(modelMap.keySet());
-  }
-
-  // ==================== 内部：构建 OpenAI 兼容 ChatModel ====================
-
-  private ChatModel buildOpenAiChatModel(ChatModelProperties.Provider p) {
-    RestClient.Builder rc = RestClient.builder().requestFactory(new JdkClientHttpRequestFactory());
-
-    OpenAiApi.Builder apiBuilder = OpenAiApi.builder()
-        .baseUrl(p.getBaseUrl())
-        .apiKey(p.getApiKey())
-        .restClientBuilder(rc);
-    if (p.getCompletionsPath() != null && !p.getCompletionsPath().isBlank()) {
-      apiBuilder.completionsPath(p.getCompletionsPath());
-    }
-    OpenAiApi api = apiBuilder.build();
-
-    OpenAiChatOptions options = OpenAiChatOptions.builder()
-        .model(p.getModel())
-        .temperature(p.getTemperature() != null ? p.getTemperature() : 0.3)
-        .maxTokens(p.getMaxTokens() != null ? p.getMaxTokens() : 2048)
-        .build();
-
-    return OpenAiChatModel.builder()
-        .openAiApi(api)
-        .defaultOptions(options)
-        .build();
   }
 }

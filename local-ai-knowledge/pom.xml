@@ -43,8 +43,8 @@
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
 
-        <!-- OpenAI 兼容协议 Starter（chat 通过 profile 切换硅基流动 / 智谱 GLM / DeepSeek）。
-             embedding 由 EmbeddingModelConfig 自定义 @Primary bean 接管（始终走硅基流动）。 -->
+        <!-- OpenAI 兼容协议 Starter（chat 通过 profile 切换智谱 GLM / DeepSeek）。
+             embedding 由 EmbeddingModelConfig 自定义 @Primary bean 接管（智谱 embedding-3）。 -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-openai</artifactId>
