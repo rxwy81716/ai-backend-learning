@@ -1,7 +1,6 @@
 package com.jianbo.algorthm.str;
 
 import java.util.Arrays;
-import java.util.Scanner;
 
 public class Demo01 {
   public static void main(String[] args) {
@@ -18,6 +17,8 @@ public class Demo01 {
     System.out.println(needle);
     int i = demo01.strStr(haystack, needle);
     System.out.println(i);
+
+    System.out.println(demo01.repeatedSubstringPattern("asdfasdfasdf"));
   }
 
   // 反转字符串.
@@ -214,6 +215,12 @@ public class Demo01 {
   // 输出: True
   // 解释: 可由子字符串 "abc" 重复四次构成。 (或者子字符串 "abcabc" 重复两次构成。)
   public boolean repeatedSubstringPattern(String s) {
-    return false;
+    int n = s.length();
+    int[] next = new int[n];
+    getNext(next, s);
+    System.out.println(Arrays.toString(next));
+    int len = next[n - 1]; // 最长相等前后缀长度
+    int unit = n - len; // 可能的最小重复单元长度
+    return len > 0 && n % unit == 0;
   }
 }

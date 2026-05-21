@@ -9,8 +9,8 @@ public class Demo01Test {
     System.out.println(demo01.reverseStr(s, 2));
     System.out.println(demo01.reverseStr2(s, 2));
     //    Scanner scanner = new Scanner(System.in);
-    //    String str = scanner.nextLine();
-    //    System.out.println(demo01.replceNumber(str));
+    String str = "a1b2m3k3";
+    System.out.println(demo01.replceNumber(str));
     s = "Hello World!";
     System.out.println(demo01.reverseWords(s));
     s = "abcdefg";
@@ -28,6 +28,15 @@ public class Demo01Test {
   // 你可以假设数组中的所有字符都是 ASCII 码表中的可打印字符。
   public void reverseString(char[] s) {
     // todo
+    int left = 0;
+    int right = s.length - 1;
+    while (left < right) {
+      s[left] ^= s[right];
+      s[right] ^= s[left];
+      s[left] ^= s[right];
+      left++;
+      right--;
+    }
   }
 
   // 反转字符串II
@@ -40,13 +49,35 @@ public class Demo01Test {
   public String reverseStr(String s, int k) {
     // todo
     char[] chars = s.toCharArray();
+    for (int i = 0; i < chars.length; i += 2 * k) {
+      int start = i;
+      int end = Math.min(i + k - 1, chars.length - 1);
+      while (start < end) {
+        chars[start] ^= chars[end];
+        chars[end] ^= chars[start];
+        chars[start] ^= chars[end];
+        start++;
+        end--;
+      }
+    }
     return new String(chars);
   }
 
   public String reverseStr2(String s, int k) {
     StringBuffer res = new StringBuffer();
     // todo
-
+    int start = 0;
+    while (start < s.length()) {
+      int first = Math.min(start + k, s.length());
+      int secord = Math.min(start + 2 * k, s.length());
+      StringBuilder temp = new StringBuilder();
+      temp.append(s, start, first);
+      res.append(temp.reverse());
+      if (first < secord) {
+        res.append(s, first, secord);
+      }
+      start += 2 * k;
+    }
     return res.toString();
   }
 
@@ -55,7 +86,28 @@ public class Demo01Test {
   // 数组处理
   public String replceNumber(String s) {
     //    //todo
-    return null;
+    char[] chars = s.toCharArray();
+    int count = 0;
+    for (char aChar : chars) {
+      if (Character.isDigit(aChar)) {
+        count++;
+      }
+    }
+    char[] newChars = new char[s.length() + 5 * count];
+    for (int i = 0, j = 0; i < chars.length && j < newChars.length; i++) {
+      char aChar = chars[i];
+      if (Character.isDigit(aChar)) {
+        newChars[j++] = 'n';
+        newChars[j++] = 'u';
+        newChars[j++] = 'm';
+        newChars[j++] = 'b';
+        newChars[j++] = 'e';
+        newChars[j++] = 'r';
+      } else {
+        newChars[j++] = chars[i];
+      }
+    }
+    return new String(newChars);
   }
 
   /**
@@ -77,6 +129,7 @@ public class Demo01Test {
   private StringBuilder removeSpace(String s) {
     // todo 删除多余的空格
     StringBuilder res = new StringBuilder();
+
     return res;
   }
 
