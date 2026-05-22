@@ -12,20 +12,20 @@ public class TextSplitConstants {
   @Deprecated
   public static final int OVERLAP_SIZE = 100;
 
-  // 动态分块配置
-  public static final int MAX_CHUNK_SIZE_LIMIT = 3000;  // 最大分块大小限制
-  public static final int MAX_OVERLAP_SIZE_LIMIT = 400; // 最大重叠大小限制
+  // 动态分块配置（上限调低：>1500 字中文 chunk 检索精度下降明显，且 embedding 信息密度被稀释）
+  public static final int MAX_CHUNK_SIZE_LIMIT = 1800;  // 最大分块大小限制
+  public static final int MAX_OVERLAP_SIZE_LIMIT = 250; // 最大重叠大小限制
 
   // 文件大小阈值（字符数）
   public static final int SMALL_FILE_THRESHOLD = 1_000_000;      // 1M
   public static final int MEDIUM_FILE_THRESHOLD = 5_000_000;    // 5M
   public static final int LARGE_FILE_THRESHOLD = 10_000_000;    // 10M
 
-  // 动态分块倍数
-  public static final double SMALL_FILE_MULTIPLIER = 1.0;       // 1M以下: 800字
-  public static final double MEDIUM_FILE_MULTIPLIER = 1.5;      // 1M-5M: 1200字
-  public static final double LARGE_FILE_MULTIPLIER = 2.0;       // 5M-10M: 1600字
-  public static final double VERY_LARGE_FILE_MULTIPLIER = 2.5;  // 10M以上: 2000字
+  // 动态分块倍数（基于 BASE_CHUNK_SIZE=800）
+  public static final double SMALL_FILE_MULTIPLIER = 1.0;       // 1M以下:    800字
+  public static final double MEDIUM_FILE_MULTIPLIER = 1.5;      // 1M-5M:    1200字
+  public static final double LARGE_FILE_MULTIPLIER = 1.75;      // 5M-10M:   1400字
+  public static final double VERY_LARGE_FILE_MULTIPLIER = 2.0;  // 10M以上:  1600字
 
   /**
    * 根据文本长度动态计算分块大小

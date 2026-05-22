@@ -16,6 +16,14 @@ spring:
       audio:
         speech: none
         transcription: none
+    # MCP Server SSE 传输层配置（默认 sse-endpoint 为 /sse，此处显式设为 /mcp/sse）
+    mcp:
+      server:
+        enabled: true
+        protocol: SSE
+        name: knowledge-base
+        sse-endpoint: /mcp/sse
+        sse-message-endpoint: /mcp/message
     vectorstore:
       pgvector:
         index-type: hnsw              # 索引类型：HNSW（推荐）或 IVFFlat

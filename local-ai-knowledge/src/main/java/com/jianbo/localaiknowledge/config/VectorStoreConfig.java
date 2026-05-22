@@ -8,6 +8,7 @@ import co.elastic.clients.transport.rest5_client.low_level.Response;
 import co.elastic.clients.transport.rest5_client.low_level.Rest5Client;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.core5.http.HttpHost;
+import org.apache.hc.core5.util.Timeout;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.TokenCountBatchingStrategy;
 import org.springframework.ai.vectorstore.elasticsearch.ElasticsearchVectorStore;
@@ -52,7 +53,15 @@ public class VectorStoreConfig {
         .options(options)
         // 索引由 esIndexInitializer 用 IK mapping 预创建，这里不再让 Spring AI 自动建
         .initializeSchema(false)
-        .batchingStrategy(new TokenCountBatchingStrategy())
+            // 默认 TokenCountBatchingStrategy() 上限仅 8191 tokens，对中文场景每批只能容纳约 5-6 个 chunk，
+            // 导致 vectorStore.add(200) 实际触发 ~37 次 embedding HTTP 调用。把上限调到 32K 后，
+            // 单次 add(200) 大致只触发 ~6 次调用，整体 embedding 调用次数下降 6-8 倍。
+            // 智谱 embedding-3 单 item 上限 8192 tokens，我们的 chunk 通常 <2000 tokens，不会超限。
+            .batchingStrategy(new TokenCountBatchingStrategy(
+                    com.knuddels.jtokkit.api.EncodingType.CL100K_BASE,
+                    32000,   // 单次 embedding 请求 token 上限（合计）
+                    0.1      // 预留 10% 余量，防 tokenizer 估计偏差
+            ))
         .build();
   }
 
@@ -126,6 +135,9 @@ public class VectorStoreConfig {
   /**
    * ES 低级 REST 客户端（Spring AI 2.x 使用 elastic-java 9.x 的 Rest5Client，基于 Apache HttpClient 5） 读取 yaml
    * 中的 spring.elasticsearch.uris
+   *
+   * <p>连接池参数从默认的 maxConnPerRoute=10/maxConnTotal=30 提升到 20/50，
+   * 以支撑并行入库时 4 线程 + embedding API 调用的并发连接需求。
    */
   @Bean
   public Rest5Client elasticsearchRestClient(
@@ -136,7 +148,14 @@ public class VectorStoreConfig {
       java.net.URI uri = java.net.URI.create(hosts[i].trim());
       httpHosts[i] = new HttpHost(uri.getScheme(), uri.getHost(), uri.getPort());
     }
-    return Rest5Client.builder(httpHosts).build();
+    return Rest5Client.builder(httpHosts)
+        .setConnectionManagerCallback(cmBuilder -> cmBuilder
+            .setMaxConnPerRoute(20)
+            .setMaxConnTotal(50))
+        .setConnectionConfigCallback(connBuilder -> connBuilder
+            .setConnectTimeout(Timeout.ofSeconds(5))
+            .setSocketTimeout(Timeout.ofSeconds(120)))
+        .build();
   }
 
   /**

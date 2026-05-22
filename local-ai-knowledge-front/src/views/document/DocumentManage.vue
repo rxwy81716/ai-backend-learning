@@ -166,9 +166,21 @@
         </div>
         <el-divider content-position="left">操作日志</el-divider>
         <div v-if="logData.logs && logData.logs.length > 0" class="log-list">
-          <div v-for="(log, index) in logData.logs" :key="index" class="log-item">
-            {{ log }}
-          </div>
+          <el-table :data="logData.logs" stripe size="small" max-height="300">
+            <el-table-column prop="created_at" label="时间" width="170">
+              <template #default="{ row }">
+                {{ formatDate(row.created_at) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="action" label="操作" width="120">
+              <template #default="{ row }">
+                <el-tag :type="getLogActionTagType(row.action)" size="small">
+                  {{ row.action }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
+          </el-table>
         </div>
         <el-empty v-else description="暂无日志" :image-size="60" />
       </div>
@@ -409,7 +421,30 @@ const formatFileSize = (bytes: number) => {
 // 格式化日期
 const formatDate = (dateStr: string) => {
   if (!dateStr) return '-'
-  return new Date(dateStr).toLocaleString('zh-CN')
+  const date = new Date(dateStr)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  const hours = String(date.getHours()).padStart(2, '0')
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+  const seconds = String(date.getSeconds()).padStart(2, '0')
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+}
+
+// 日志操作标签类型
+const getLogActionTagType = (action: string) => {
+  const map: Record<string, string> = {
+    UPLOAD: 'info',
+    QUEUED: 'info',
+    PARSE_START: 'warning',
+    PARSE_DONE: 'success',
+    IMPORT_START: 'warning',
+    IMPORT_DONE: 'success',
+    REPARSE: 'warning',
+    DELETED: 'danger',
+    FAILED: 'danger'
+  }
+  return map[action] || 'info'
 }
 
 onMounted(() => {

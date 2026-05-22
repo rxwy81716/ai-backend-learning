@@ -20,8 +20,8 @@ public class TextSplitterUtil {
       return chunks;
     }
 
-    // 2. 将文本拆分为原子级的”句子”
-    List<String> sentences = getSentences(text, dynamicChunkSize);
+    // 2. 递归切分：段落(\n) → 句子(。！？；) → 子句(、：,) → 字符，逐级降级
+    List<String> sentences = recursiveSplit(text, dynamicChunkSize);
 
     // 3. 动态合并句子
     StringBuilder currentChunk = new StringBuilder();
@@ -57,41 +57,47 @@ public class TextSplitterUtil {
     return chunks;
   }
 
-  // 提取句子（按中英文标点+换行断句，保留分隔符在句尾）
-  // 一级断句：句号、问号、感叹号、分号、换行（强分割，语义完整边界）
-  // 二级断句：顿号、冒号、英文逗号（弱分割，仅在一级断句后单段仍超长时使用）
-  private static List<String> getSentences(String text, int chunkSize) {
-    List<String> sentences = new ArrayList<>();
-    // 一级断句：中文句号/问号/感叹号/分号/逗号 + 英文句号/问号/感叹号/分号 + 换行
-    // 注意：在字符类 [] 中，英文句号必须用 \\. 转义，否则 . 匹配任意字符
-    String[] parts = text.split("(?<=[。！？；，\\.!?\\n])");
-    for (String part : parts) {
-      String trimmed = part.trim();
-      if (!trimmed.isEmpty()) {
-        // 如果单段仍超过动态阈值，用二级断句进一步拆分
-        if (trimmed.length() > chunkSize) {
-          sentences.addAll(secondarySplit(trimmed, chunkSize));
-        } else {
-          sentences.add(trimmed);
-        }
-      }
-    }
-    if (sentences.isEmpty()) sentences.add(text); // 兜底
-    return sentences;
+  // 递归切分：按多级分隔符自顶向下切，每级切完仍超长则继续向下降级。
+  // 分隔符优先级（参考 LangChain RecursiveCharacterTextSplitter 思想）：
+  //   L0 段落:   \n          （最强语义边界）
+  //   L1 句子:   。！？!?     （句末标点）
+  //   L2 子句:   ；;          （分号）
+  //   L3 子句:   ，、:：,     （逗号/顿号/冒号；最弱，保留为最后退路）
+  // 注意：逗号不再作为一级分隔，避免中文一句多逗号导致碎片化。
+  private static final String[] SEPARATORS = {"\n", "[。！？!?]", "[；;]", "[，、:：,]"};
+
+  /**
+   * 递归把 text 切到所有片段 <= chunkSize，分隔符自上而下逐级降级
+   */
+  private static List<String> recursiveSplit(String text, int chunkSize) {
+    return recursiveSplit(text, chunkSize, 0);
   }
 
-  // 二级断句：按顿号、冒号、英文逗号进一步拆分超长段落
-  private static List<String> secondarySplit(String longPart, int chunkSize) {
-    List<String> result = new ArrayList<>();
-    String[] subParts = longPart.split("(?<=[、：:,\\.，])");
-    for (String sub : subParts) {
-      String trimmed = sub.trim();
-      if (!trimmed.isEmpty()) {
-        result.add(trimmed);
+  private static List<String> recursiveSplit(String text, int chunkSize, int level) {
+    List<String> out = new ArrayList<>();
+    if (text.length() <= chunkSize) {
+      String t = text.trim();
+      if (!t.isEmpty()) out.add(t);
+      return out;
+    }
+    // 已用完所有分隔符 → 强制按字符切（兜底）
+    if (level >= SEPARATORS.length) {
+      out.add(text);
+      return out;
+    }
+    // 用当前级分隔符切（保留分隔符在末尾，保持语义完整）
+    String[] parts = text.split("(?<=" + SEPARATORS[level] + ")");
+    for (String p : parts) {
+      if (p.isEmpty()) continue;
+      if (p.length() <= chunkSize) {
+        out.add(p);
+      } else {
+        // 超长 → 用下一级分隔符继续切
+        out.addAll(recursiveSplit(p, chunkSize, level + 1));
       }
     }
-    if (result.isEmpty()) result.add(longPart); // 兜底
-    return result;
+    if (out.isEmpty()) out.add(text); // 兜底
+    return out;
   }
 
   // 处理重叠区：从当前索引往前找，直到凑满 overlapSize
