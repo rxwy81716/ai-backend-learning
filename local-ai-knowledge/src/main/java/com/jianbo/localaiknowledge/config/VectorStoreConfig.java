@@ -8,6 +8,7 @@ import co.elastic.clients.transport.rest5_client.low_level.Response;
 import co.elastic.clients.transport.rest5_client.low_level.Rest5Client;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.core5.http.HttpHost;
+import org.apache.hc.core5.util.Timeout;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.TokenCountBatchingStrategy;
 import org.springframework.ai.vectorstore.elasticsearch.ElasticsearchVectorStore;
@@ -126,6 +127,9 @@ public class VectorStoreConfig {
   /**
    * ES 低级 REST 客户端（Spring AI 2.x 使用 elastic-java 9.x 的 Rest5Client，基于 Apache HttpClient 5） 读取 yaml
    * 中的 spring.elasticsearch.uris
+   *
+   * <p>连接池参数从默认的 maxConnPerRoute=10/maxConnTotal=30 提升到 20/50，
+   * 以支撑并行入库时 4 线程 + embedding API 调用的并发连接需求。
    */
   @Bean
   public Rest5Client elasticsearchRestClient(
@@ -136,7 +140,14 @@ public class VectorStoreConfig {
       java.net.URI uri = java.net.URI.create(hosts[i].trim());
       httpHosts[i] = new HttpHost(uri.getScheme(), uri.getHost(), uri.getPort());
     }
-    return Rest5Client.builder(httpHosts).build();
+    return Rest5Client.builder(httpHosts)
+        .setConnectionManagerCallback(cmBuilder -> cmBuilder
+            .setMaxConnPerRoute(20)
+            .setMaxConnTotal(50))
+        .setConnectionConfigCallback(connBuilder -> connBuilder
+            .setConnectTimeout(Timeout.ofSeconds(5))
+            .setSocketTimeout(Timeout.ofSeconds(120)))
+        .build();
   }
 
   /**
