@@ -7,19 +7,6 @@ import com.jianbo.localaiknowledge.mapper.DocumentTaskMapper;
 import com.jianbo.localaiknowledge.model.DocumentChunk;
 import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.model.DocumentTask.TaskStatus;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.redisson.api.RBlockingQueue;
-import org.redisson.api.RedissonClient;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.ai.document.Document;
-import org.springframework.ai.reader.tika.TikaDocumentReader;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.core.io.FileSystemResource;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
@@ -33,6 +20,18 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.redisson.api.RBlockingQueue;
+import org.redisson.api.RedissonClient;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.reader.tika.TikaDocumentReader;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * 文档解析服务
@@ -165,19 +164,24 @@ public class DocumentParseService {
     } catch (Exception ignore) {
     }
 
-    // 重置任务状态
+    // 重置任务状态（DB 写入 + 日志写入原子提交，防止部分失败状态不一致）
+    resetTaskForReparse(task);
+
+    // 重新投递队列（事务提交后才入队，避免消费者在 DB 事务提交前读到旧状态）
+    submitToQueue(taskId);
+  }
+
+  /** 重解析事务：重置任务 + 写日志，二者原子提交。与外部资源（ES/PG_chunk）清理分离， 后者失败不需要回滚 DB，仅记 warn。 */
+  @Transactional(rollbackFor = Exception.class)
+  protected void resetTaskForReparse(DocumentTask task) {
     task.setStatus(TaskStatus.UPLOADED);
     task.setErrorMsg(null);
     task.setTotalChunks(0);
     task.setImportedChunks(0);
     task.setFinishedAt(null);
     taskMapper.update(task);
-
-    taskLogMapper.insert(taskId, "REPARSE", "用户触发重新解析: " + task.getFileName());
-    log.info("[{}] 重新解析已触发: {}", taskId, task.getFileName());
-
-    // 重新投递队列
-    submitToQueue(taskId);
+    taskLogMapper.insert(task.getTaskId(), "REPARSE", "用户触发重新解析: " + task.getFileName());
+    log.info("[{}] 重新解析已触发: {}", task.getTaskId(), task.getFileName());
   }
 
   /** 删除文档任务（DB记录 + 本地文件 + ES向量 + PG数据）- 使用事务保证原子性 */
@@ -342,8 +346,10 @@ public class DocumentParseService {
         log.warn("[{}] RAG 检索缓存清理失败: {}", taskId, cacheErr.getMessage());
       }
     } catch (Exception e) {
-      failTask(task, e.getMessage());
-      log.error("[{}] 文档处理失败: {}", taskId, e.getMessage(), e);
+      // e.getMessage() 可能为 null（如 NullPointerException），存 null 到 error_msg 不利于排查
+      String msg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+      failTask(task, msg);
+      log.error("[{}] 文档处理失败: {}", taskId, msg, e);
     }
   }
 

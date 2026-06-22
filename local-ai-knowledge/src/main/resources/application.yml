@@ -92,6 +92,9 @@ app:
     secret: local-dev-jwt-secret-key-at-least-32-chars-do-not-use-in-prod-2026
     expiration-hours: 24
   crawler-api-key: local-dev-crawler-api-key-2026
+  # CORS 允许的 Origin（逗号分隔）。生产部署通过环境变量或 profile 覆盖，避免硬编码 IP 进代码。
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:5173,http://101.132.182.160:5173}
   rate-limit:
     anonymous-max: 20                 # 匿名用户每窗口最大请求数
     window-minutes: 60                # 限流窗口（分钟）

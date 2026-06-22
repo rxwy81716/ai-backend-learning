@@ -18,7 +18,7 @@ import org.springframework.context.annotation.Configuration;
 public class JacksonConfig {
 
   @Bean
-  @ConditionalOnMissingBean
+  @ConditionalOnMissingBean(ObjectMapper.class)
   public ObjectMapper objectMapper() {
     return new ObjectMapper();
   }

@@ -1,6 +1,7 @@
 package com.jianbo.localaiknowledge.config;
 
 import com.jianbo.localaiknowledge.utils.R;
+import java.util.stream.Collectors;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -11,8 +12,6 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-
-import java.util.stream.Collectors;
 
 /** 全局异常统一处理 */
 @Slf4j
@@ -87,11 +86,11 @@ public class GlobalExceptionHandler {
     return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(R.badRequest(e.getMessage()));
   }
 
-  /** 业务异常 */
+  /** 业务异常（状态冲突）：例如 "任务正在处理中"、"源文件已不存在" 等可预期错误。 返回 409 Conflict 而非 500，便于前端区分系统错误与业务约束冲突。 */
   @ExceptionHandler(IllegalStateException.class)
   public ResponseEntity<R<?>> handleIllegalState(IllegalStateException e) {
-    log.warn("业务异常: {}", e.getMessage());
-    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(R.error(e.getMessage()));
+    log.warn("业务状态冲突: {}", e.getMessage());
+    return ResponseEntity.status(HttpStatus.CONFLICT).body(R.error(e.getMessage()));
   }
 
   /** 其他异常 */

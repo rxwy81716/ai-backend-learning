@@ -1,23 +1,26 @@
 package com.jianbo.localaiknowledge.service;
 
+import co.elastic.clients.elasticsearch.ElasticsearchClient;
 import co.elastic.clients.transport.rest5_client.low_level.Request;
 import co.elastic.clients.transport.rest5_client.low_level.Rest5Client;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.jspecify.annotations.NonNull;
-import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.stereotype.Service;
-
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntConsumer;
+import java.util.stream.IntStream;
+import lombok.extern.slf4j.Slf4j;
+import org.jspecify.annotations.NonNull;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.stereotype.Service;
 
 /**
  * Elasticsearch 向量入库服务
@@ -27,13 +30,60 @@ import java.util.function.IntConsumer;
  */
 @Service
 @Slf4j
-@RequiredArgsConstructor
 public class EsVectorStoreService {
   /** ElasticsearchVectorStore（由 ES starter 自动配置）；统一向量存储 API。 */
   private final VectorStore vectorStore;
 
-  /** ES 9.x 低级客户端（Apache HttpClient 5）：用于 _delete_by_query 与索引 settings 调整 */
+  /** ES 9.x 低级客户端：仍保留用于索引 settings 调整（无类型安全 API 对应） */
   private final Rest5Client restClient;
+
+  /** 类型安全客户端：用于 _delete_by_query 等业务查询，避免手拼 JSON */
+  private final ElasticsearchClient esClient;
+
+  /**
+   * 入库专用线程池：避免裸 new Thread()，限制并发上限，daemon 防止阻塞 JVM 退出。 核心 = max poolSize = 16，足够 2 个大文件并行各 8 路；超出走
+   * CallerRuns 由调用线程兜底。
+   */
+  private final ExecutorService importExecutor;
+
+  /** 当前正在入库的任务计数：归零时才恢复 ES refresh/replicas，避免多文件并发时被早恢复影响吞吐 */
+  private final AtomicInteger activeImports = new AtomicInteger(0);
+
+  public EsVectorStoreService(
+      VectorStore vectorStore, Rest5Client restClient, ElasticsearchClient esClient) {
+    this.vectorStore = vectorStore;
+    this.restClient = restClient;
+    this.esClient = esClient;
+    AtomicInteger seq = new AtomicInteger();
+    this.importExecutor =
+        new java.util.concurrent.ThreadPoolExecutor(
+            16,
+            16,
+            60L,
+            TimeUnit.SECONDS,
+            new java.util.concurrent.LinkedBlockingQueue<>(64),
+            r -> {
+              Thread t = new Thread(r, "es-import-" + seq.incrementAndGet());
+              t.setDaemon(true);
+              t.setUncaughtExceptionHandler(
+                  (th, ex) -> log.error("ES 入库线程 {} 未捕获异常", th.getName(), ex));
+              return t;
+            },
+            new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+  }
+
+  @PreDestroy
+  public void shutdown() {
+    importExecutor.shutdown();
+    try {
+      if (!importExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+        importExecutor.shutdownNow();
+      }
+    } catch (InterruptedException e) {
+      importExecutor.shutdownNow();
+      Thread.currentThread().interrupt();
+    }
+  }
 
   private static final String INDEX_NAME = "knowledge_vector_store";
 
@@ -108,27 +158,29 @@ public class EsVectorStoreService {
     log.info("ES 已删除 {} 条", documentIds.size());
   }
 
-  /** 按来源名称删除 ES 向量文档（精确按 metadata.source + 可选 user_id 过滤） */
+  /**
+   * 按来源名称删除 ES 向量文档（精确按 metadata.source + 可选 user_id 过滤）。 使用类型安全的 ElasticsearchClient DSL，避免手拼 JSON
+   * 时的注入风险与转义遗漏。
+   */
   public void deleteBySource(String source, String userId) throws IOException {
-    Request request = new Request("POST", "/" + INDEX_NAME + "/_delete_by_query");
-
-    // ES mapping 中 metadata.source 已是 keyword 类型，term 查询直接匹配
-    StringBuilder queryBuilder = new StringBuilder();
-    queryBuilder.append("{\"query\":{\"bool\":{\"must\":[");
-    queryBuilder
-        .append("{\"term\":{\"metadata.source\":\"")
-        .append(source.replace("\"", "\\\""))
-        .append("\"}}");
-    if (userId != null && !userId.isBlank()) {
-      queryBuilder
-          .append(",{\"term\":{\"metadata.user_id\":\"")
-          .append(userId.replace("\"", "\\\""))
-          .append("\"}}");
-    }
-    queryBuilder.append("]}}}");
-
-    request.setJsonEntity(queryBuilder.toString());
-    restClient.performRequest(request);
+    final String finalUserId = (userId != null && !userId.isBlank()) ? userId : null;
+    esClient.deleteByQuery(
+        d ->
+            d.index(INDEX_NAME)
+                .query(
+                    q ->
+                        q.bool(
+                            b -> {
+                              b.must(m -> m.term(t -> t.field("metadata.source").value(source)));
+                              if (finalUserId != null) {
+                                b.must(
+                                    m ->
+                                        m.term(
+                                            t -> t.field("metadata.user_id").value(finalUserId)));
+                              }
+                              return b;
+                            }))
+                .refresh(true));
     log.info("ES 已按来源删除: source={}, userId={}", source, userId);
   }
 
@@ -172,15 +224,19 @@ public class EsVectorStoreService {
     log.info("ES 分批入库: {} 段, {} 批(每批{}段), {} 路并行, 来源: {}",
         total, batches, batchSize, parallelism, source);
 
-    // 入库前关闭 refresh 和副本
-    disableRefreshAndReplicas();
+    // 引用计数：首个入库任务关闭 refresh/副本，末个任务恢复，避免多文件并发时被早恢复
+    if (activeImports.incrementAndGet() == 1) {
+      disableRefreshAndReplicas();
+    }
     try {
       if (parallelism <= 1 || total <= batchSize) {
         return sequentialImport(documents, total, batchSize, batches, source, progressCallback);
       }
       return parallelImport(documents, total, batchSize, batches, parallelism, source, progressCallback);
     } finally {
-      enableRefreshAndReplicas();
+      if (activeImports.decrementAndGet() == 0) {
+        enableRefreshAndReplicas();
+      }
     }
   }
 
@@ -210,50 +266,56 @@ public class EsVectorStoreService {
                                int batches, int parallelism, String source,
                                IntConsumer progressCallback) {
     AtomicInteger completedCount = new AtomicInteger(0);
-    AtomicReference<Exception> firstError = new AtomicReference<>();
-    CountDownLatch latch = new CountDownLatch(parallelism);
-    int lastReported = 0; // 用于回调去重（single-thread access on main thread is fine）
+    // 进度回调时间窗节流：每 500ms 最多触发一次，避免并发线程争锁；同时保证最后一次必到达
+    AtomicLong lastReportMs = new AtomicLong(0);
+    final long reportIntervalMs = 500;
 
-    for (int t = 0; t < parallelism; t++) {
-      final int threadId = t;
-      new Thread(() -> {
-        try {
-          long pauseMs = 0;
-          for (int start = threadId * batchSize; start < total; start += batchSize * parallelism) {
-            int end = Math.min(start + batchSize, total);
-            List<Document> batch = documents.subList(start, end);
-            int batchNo = start / batchSize + 1;
+    CompletableFuture<?>[] futures =
+        IntStream.range(0, parallelism)
+            .mapToObj(
+                threadId ->
+                    CompletableFuture.runAsync(
+                        () -> {
+                          long pauseMs = 0;
+                          for (int start = threadId * batchSize;
+                              start < total;
+                              start += batchSize * parallelism) {
+                            int end = Math.min(start + batchSize, total);
+                            List<Document> batch = documents.subList(start, end);
+                            int batchNo = start / batchSize + 1;
 
-            pauseMs = processOneBatch(batch, batchNo, batches, source, pauseMs);
+                            pauseMs = processOneBatch(batch, batchNo, batches, source, pauseMs);
 
-            int completed = completedCount.addAndGet(batch.size());
-            if (progressCallback != null) {
-              synchronized (progressCallback) {
-                progressCallback.accept(completed);
-              }
-            }
-
-            if (firstError.get() != null) return;
-          }
-        } catch (Exception e) {
-          firstError.compareAndSet(null, e);
-        } finally {
-          latch.countDown();
-        }
-      }, "es-import-" + threadId).start();
-    }
+                            int completed = completedCount.addAndGet(batch.size());
+                            // 节流：仅在间隔到达或全部完成时触发回调（CAS 保证只有一个线程上报）
+                            if (progressCallback != null) {
+                              long now = System.currentTimeMillis();
+                              long last = lastReportMs.get();
+                              boolean isFinal = completed >= total;
+                              if ((isFinal || now - last >= reportIntervalMs)
+                                  && lastReportMs.compareAndSet(last, now)) {
+                                progressCallback.accept(completed);
+                              }
+                            }
+                          }
+                        },
+                        importExecutor))
+            .toArray(CompletableFuture[]::new);
 
     try {
-      latch.await();
+      CompletableFuture.allOf(futures).get();
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throw new RuntimeException("ES 并行入库被中断", e);
+    } catch (java.util.concurrent.ExecutionException e) {
+      Throwable cause = e.getCause();
+      if (cause instanceof RuntimeException re) throw re;
+      throw new RuntimeException("ES 并行入库失败", cause);
     }
 
-    Exception err = firstError.get();
-    if (err != null) {
-      if (err instanceof RuntimeException re) throw re;
-      throw new RuntimeException("ES 并行入库失败", err);
+    // 收尾：保证最终进度被上报（节流可能错过最后一次）
+    if (progressCallback != null) {
+      progressCallback.accept(completedCount.get());
     }
 
     log.info("ES 并行入库完成: {} 段, {} 路并行, 来源: {}", total, parallelism, source);

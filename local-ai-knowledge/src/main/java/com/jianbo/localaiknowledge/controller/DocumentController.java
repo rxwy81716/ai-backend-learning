@@ -4,6 +4,16 @@ import com.jianbo.localaiknowledge.model.DocumentChunk;
 import com.jianbo.localaiknowledge.model.DocumentTask;
 import com.jianbo.localaiknowledge.service.DocumentParseService;
 import com.jianbo.localaiknowledge.utils.SecurityUtil;
+import java.io.IOException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,16 +24,6 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
 
 /**
  * 文档上传 & 解析状态查询
@@ -85,7 +85,11 @@ public class DocumentController {
     if (crawlerApiKey == null || crawlerApiKey.isBlank()) {
       throw new IllegalStateException("服务未配置 crawler-api-key，接口不可用");
     }
-    if (!crawlerApiKey.equals(apiKey)) {
+    // 常量时间比对，防止时序侧信道攻击（String.equals 遇不等字符会提前返回，可被量时推测 key）
+    if (apiKey == null
+        || !MessageDigest.isEqual(
+            crawlerApiKey.getBytes(StandardCharsets.UTF_8),
+            apiKey.getBytes(StandardCharsets.UTF_8))) {
       throw new IllegalArgumentException("无效的 API Key");
     }
     if (file.isEmpty()) {
@@ -107,15 +111,19 @@ public class DocumentController {
    */
   private Map<String, Object> saveAndDispatch(
       MultipartFile file, String userId, String docScope, String logPrefix) {
-    String originalName = file.getOriginalFilename();
+    String originalName = sanitizeFilename(file.getOriginalFilename());
     String taskId = UUID.randomUUID().toString().replace("-", "");
     try {
-      Path dirPath = Paths.get(uploadDir);
+      Path dirPath = Paths.get(uploadDir).normalize();
       if (!Files.exists(dirPath)) {
         Files.createDirectories(dirPath);
       }
       String savedName = taskId + "_" + originalName;
-      Path filePath = dirPath.resolve(savedName);
+      Path filePath = dirPath.resolve(savedName).normalize();
+      // 双保险：确保最终路径仍在 uploadDir 下，防止路径遍历
+      if (!filePath.startsWith(dirPath)) {
+        throw new IllegalArgumentException("非法的文件名");
+      }
       try (var inputStream = file.getInputStream()) {
         Files.copy(inputStream, filePath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
       }
@@ -136,6 +144,22 @@ public class DocumentController {
       log.error("{}文件保存失败: {}", logPrefix, e.getMessage(), e);
       throw new IllegalStateException("文件保存失败: " + e.getMessage());
     }
+  }
+
+  /**
+   * 清洗上传文件名： 1）剩下 purely filename 部分（除掉客户端可能传的路径） 2）只保留安全字符：中文 / 字母数字 / 点 / 下划线 / 连字符
+   * 3）其余字符（含路径分隔符、..、空格、中括号等）替换为 _
+   */
+  private static String sanitizeFilename(String raw) {
+    if (raw == null || raw.isBlank()) {
+      throw new IllegalArgumentException("文件名不能为空");
+    }
+    String base = Paths.get(raw).getFileName().toString();
+    String cleaned = base.replaceAll("[^a-zA-Z0-9._\\u4e00-\\u9fa5-]", "_");
+    if (cleaned.isBlank() || ".".equals(cleaned) || "..".equals(cleaned)) {
+      throw new IllegalArgumentException("非法的文件名");
+    }
+    return cleaned;
   }
 
   /** 查询单个任务状态 */

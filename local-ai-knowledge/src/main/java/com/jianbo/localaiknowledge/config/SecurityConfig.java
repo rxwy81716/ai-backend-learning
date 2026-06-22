@@ -2,9 +2,13 @@ package com.jianbo.localaiknowledge.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
+import java.util.List;
+import java.util.Map;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -18,9 +22,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
-
-import java.util.List;
-import java.util.Map;
 
 /**
  * Spring Security 配置
@@ -37,6 +38,10 @@ public class SecurityConfig {
   private final RateLimitFilter rateLimitFilter;
   private final ObjectMapper objectMapper;
 
+  /** 允许跨域的 Origin；逗号分隔。默认含本地开发环境，生产请通过 app.cors.allowed-origins 覆盖。 */
+  @Value("${app.cors.allowed-origins:http://localhost:5173}")
+  private String allowedOriginsRaw;
+
   @Bean
   public PasswordEncoder passwordEncoder() {
     return new BCryptPasswordEncoder();
@@ -45,8 +50,13 @@ public class SecurityConfig {
   @Bean
   public CorsConfigurationSource corsConfigurationSource() {
     CorsConfiguration configuration = new CorsConfiguration();
-    configuration.setAllowedOrigins(
-        List.of("http://localhost:5173", "http://101.132.182.160:5173"));
+    // 从配置读取允许的 Origin，避免硬编码生产 IP
+    List<String> origins =
+        java.util.Arrays.stream(allowedOriginsRaw.split(","))
+            .map(String::trim)
+            .filter(s -> !s.isEmpty())
+            .toList();
+    configuration.setAllowedOrigins(origins);
     configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
     configuration.setAllowedHeaders(List.of("*"));
     configuration.setAllowCredentials(true);
@@ -87,7 +97,12 @@ public class SecurityConfig {
                     // 管理员接口：必须 ROLE_ADMIN
                     .requestMatchers("/api/admin/**")
                     .hasAuthority("ROLE_ADMIN")
-                    // 其余 /api/**：允许匿名访问，由 RateLimitFilter 限流未认证请求
+                    // 文档写操作（上传/重解析/删除）必须认证；爬虫专用接口走 X-Crawler-Key（路径 /api/doc/crawler-upload，不在此列表）
+                    .requestMatchers("/api/doc/upload", "/api/doc/reparse/**")
+                    .authenticated()
+                    .requestMatchers(HttpMethod.DELETE, "/api/doc/**")
+                    .authenticated()
+                    // 其余 /api/**：允许匿名访问（查询类），由 RateLimitFilter 限流
                     .requestMatchers("/api/**")
                     .permitAll()
                     // 其他资源放行

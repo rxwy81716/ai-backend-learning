@@ -2,6 +2,10 @@ package com.jianbo.localaiknowledge.consumer;
 
 import com.jianbo.localaiknowledge.service.DocumentParseService;
 import jakarta.annotation.PreDestroy;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBlockingQueue;
@@ -9,10 +13,6 @@ import org.redisson.api.RedissonClient;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Redisson 队列消费者
@@ -31,7 +31,23 @@ public class DocParseQueueConsumer {
   private final DocumentParseService documentParseService;
 
   private static final int CONSUMER_THREADS = 2;
-  private final ExecutorService executor = Executors.newFixedThreadPool(CONSUMER_THREADS);
+
+  /** 自定义 ThreadFactory：命名 + daemon + UncaughtExceptionHandler，便于线上 jstack 排查与防止阻塞 JVM 退出 */
+  private final ExecutorService executor =
+      Executors.newFixedThreadPool(
+          CONSUMER_THREADS,
+          new java.util.concurrent.ThreadFactory() {
+            private final AtomicInteger seq = new AtomicInteger();
+
+            @Override
+            public Thread newThread(Runnable r) {
+              Thread t = new Thread(r, "doc-consumer-" + seq.incrementAndGet());
+              t.setDaemon(true);
+              t.setUncaughtExceptionHandler(
+                  (th, ex) -> log.error("文档消费线程 {} 未捕获异常", th.getName(), ex));
+              return t;
+            }
+          });
 
   private volatile boolean running = true;
 
